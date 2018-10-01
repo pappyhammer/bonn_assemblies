@@ -13,7 +13,7 @@ from pattern_discovery.display.raster import plot_spikes_raster
 from pattern_discovery.tools.loss_function import loss_function_with_sliding_window
 import pattern_discovery.tools.trains as trains_module
 from pattern_discovery.seq_solver.markov_way import order_spike_nums_by_seq
-from pattern_discovery.tools.sce_detection import get_sce_detection_threshold
+from pattern_discovery.tools.sce_detection import get_sce_detection_threshold, detect_sce_with_sliding_window
 from sortedcontainers import SortedList, SortedDict
 
 
@@ -61,11 +61,12 @@ class SleepStage:
 
 class SpikeStructure:
 
-    def __init__(self, patient, spike_data, microwire_labels, cluster_labels, activity_threshold=None,
+    def __init__(self, patient, spike_nums, spike_trains, microwire_labels, cluster_labels, activity_threshold=None,
                  title=None, ordered_indices=None, ordered_spike_data=None,
                  one_sec=10 ** 6):
         self.patient = patient
-        self.spike_data = spike_data
+        self.spike_nums = spike_nums
+        self.spike_trains = spike_trains
         self.ordered_spike_data = ordered_spike_data
         # array of int
         self.microwire_labels = np.array(microwire_labels)
@@ -79,13 +80,130 @@ class SpikeStructure:
         # one_sec reprents the number of times in one sec
         self.one_sec = one_sec
         if self.ordered_indices is not None:
+            if self.spike_nums is not None:
+                self.ordered_spike_nums = np.copy(self.spike_nums[ordered_indices, :])
+            else:
+                self.ordered_spike_nums = None
+            if self.spike_trains is not None:
+                self.ordered_spike_trains = []
+                for index in ordered_indices:
+                    self.ordered_spike_trains.append(self.spike_trains[index])
+            else:
+                self.ordered_spike_trains = None
             self.ordered_labels = []
             # y_ticks_labels_ordered = spike_nums_struct.labels[best_seq]
             for old_cell_index in self.ordered_indices:
                 self.ordered_labels.append(self.labels[old_cell_index])
 
     def decrease_resolution(self, n=0, max_time=0):
-        return
+        if n > 0:
+            self.one_sec = self.one_sec * 10 ** -n
+            if self.spike_nums is not None:
+                n_times = self.spike_nums.shape[1]
+                new_spike_nums = np.zeros((self.spike_nums.shape[0], int(np.ceil(n_times * 10 ** -n))), dtype="uint8")
+                # print(f"new_spike_nums.shape {new_spike_nums.shape}")
+                for cell, spike_train in enumerate(self.spike_nums):
+                    # getting indices of where the cell is spiking
+                    spike_train = np.where(spike_train)[0]
+                    # then reducing dimension
+                    spike_train = (spike_train * 10 ** -n).astype(int)
+                    new_spike_nums[cell, spike_train] = 1
+                self.spike_nums = new_spike_nums
+            if self.spike_trains is not None:
+                for i, spike_train in enumerate(self.spike_trains):
+                    self.spike_trains[i] = spike_train * 10 ** -n
+            return
+
+        if max_time > 0:
+            if self.spike_nums is not None:
+                if max_time > 0:
+                    max_time = 10 ** max_time
+                    # first looking for the max value
+                    max_value = np.max(self.spike_nums)
+
+                    if max_value > max_time:
+                        n_p = 0
+                        while max_value > max_time:
+                            max_value = max_value / 10
+                            n_p += 1
+                        self.decrease_resolution(n=n_p)
+            elif self.spike_trains is not None:
+                max_time = 10 ** max_time
+                # first looking for the max value
+                max_value = 0
+                for i, spike_train in enumerate(self.spike_trains):
+                    max_value = np.max((max_value, np.max(spike_train)))
+                if max_value > max_time:
+                    n_p = 0
+                    while max_value > max_time:
+                        max_value = max_value / 10
+                        n_p += 1
+                    # print(f"n_p {n_p}")
+                    # decreasing by 10**n_p factor
+                    self.decrease_resolution(n=n_p)
+
+        # if self.spike_trains is not None:
+        #     self.decrease_resolution_spike_trains(n=n, max_time=max_time)
+        # if self.spike_nums is not None:
+        #     self.decrease_resolution_spike_nums(n=n, max_time=max_time)
+
+    def decrease_resolution_spike_nums(self, n=0, max_time=0):
+        """
+
+        :param n: integer, will divide all values by 10**-n
+        :param max_time:  will divide all values by 10**-N, with N the minimum integer such as the max timestamps value
+               will be < 10**max_time
+        :return:
+                """
+        # if n > 0:
+        #     n_times = self.spike_nums.shape[1]
+        #     new_spike_nums = np.zeros((self.spike_nums.shape[0], int(np.ceil(n_times * 10 ** -n))), dtype="uint8")
+        #     # print(f"new_spike_nums.shape {new_spike_nums.shape}")
+        #     for cell, spike_train in enumerate(self.spike_nums):
+        #         # getting indices of where the cell is spiking
+        #         spike_train = np.where(spike_train)[0]
+        #         # then reducing dimension
+        #         spike_train = (spike_train * 10 ** -n).astype(int)
+        #         new_spike_nums[cell, spike_train] = 1
+        #     self.spike_nums = new_spike_nums
+
+        if max_time > 0:
+            max_time = 10 ** max_time
+            # first looking for the max value
+            max_value = np.max(self.spike_nums)
+
+            if max_value > max_time:
+                n_p = 0
+                while max_value > max_time:
+                    max_value = max_value / 10
+                    n_p += 1
+                self.decrease_resolution_spike_nums(n=n_p)
+
+    def decrease_resolution_spike_trains(self, n=0, max_time=0):
+        """
+
+               :param n: integer, will divide all values by 10**-n
+               :param max_time:  will divide all values by 10**-N, with N the minimum integer such as the max timestamps value
+               will be < 10**max_time
+               :return:
+        """
+        if n > 0:
+            for i, spike_train in enumerate(self.spike_trains):
+                self.spike_trains[i] = spike_train * 10 ** -n
+        if max_time > 0:
+            max_time = 10 ** max_time
+            # first looking for the max value
+            max_value = 0
+            for i, spike_train in enumerate(self.spike_trains):
+                max_value = np.max((max_value, np.max(spike_train)))
+            if max_value > max_time:
+                n_p = 0
+                while max_value > max_time:
+                    max_value = max_value / 10
+                    n_p += 1
+                # print(f"n_p {n_p}")
+                # decreasing by 10**n_p factor
+                self.decrease_resolution_spike_trains(n=n_p)
 
     def get_labels(self):
         labels = []
@@ -102,12 +220,24 @@ class SpikeStructure:
             return int(result)
         return result
 
-    def set_order(self, ordered_spike_data, ordered_indices):
-        self.ordered_spike_data = ordered_spike_data
-        self.ordered_indices = ordered_indices
-        self.ordered_labels = []
-        for old_cell_index in self.ordered_indices:
-            self.ordered_labels.append(self.labels[old_cell_index])
+    def set_order(self, ordered_indices):
+        if ordered_indices is None:
+            self.ordered_spike_nums = np.copy(self.spike_nums)
+        else:
+            if self.spike_nums is not None:
+                self.ordered_spike_nums = np.copy(self.spike_nums[ordered_indices, :])
+            # else:
+            #     self.ordered_spike_nums = None
+            if self.spike_trains is not None:
+                self.ordered_spike_trains = []
+                for index in ordered_indices:
+                    self.ordered_spike_trains.append(self.spike_trains[index])
+            # else:
+            #     self.ordered_spike_trains = None
+            self.ordered_indices = ordered_indices
+            self.ordered_labels = []
+            for old_cell_index in self.ordered_indices:
+                self.ordered_labels.append(self.labels[old_cell_index])
 
 
 class SpikeTrainsStructure(SpikeStructure):
@@ -119,39 +249,11 @@ class SpikeTrainsStructure(SpikeStructure):
                  title=None, ordered_spike_trains=None, ordered_indices=None,
                  one_sec=10 ** 6):
 
-        super().__init__(patient=patient, spike_data=spike_trains, microwire_labels=microwire_labels,
+        super().__init__(patient=patient, spike_trains=spike_trains, microwire_labels=microwire_labels,
                          cluster_labels=cluster_labels,
                          activity_threshold=activity_threshold, title=title,
                          ordered_indices=ordered_indices, ordered_spike_data=ordered_spike_trains,
                          one_sec=one_sec)
-
-    def decrease_resolution(self, n=0, max_time=0):
-        """
-
-        :param n: integer, will divide all values by 10**-n
-        :param max_time:  will divide all values by 10**-N, with N the minimum integer such as the max timestamps value
-        will be < 10**max_time
-        :return:
-        """
-        super().decrease_resolution(n=n, max_time=max_time)
-        if n > 0:
-            self.one_sec = self.one_sec * 10 ** -n
-            for i, spike_train in enumerate(self.spike_data):
-                self.spike_data[i] = spike_train * 10 ** -n
-        if max_time > 0:
-            max_time = 10 ** max_time
-            # first looking for the max value
-            max_value = 0
-            for i, spike_train in enumerate(self.spike_data):
-                max_value = np.max((max_value, np.max(spike_train)))
-            if max_value > max_time:
-                n_p = 0
-                while max_value > max_time:
-                    max_value = max_value / 10
-                    n_p += 1
-                # print(f"n_p {n_p}")
-                # decreasing by 10**n_p factor
-                self.decrease_resolution(n=n_p)
 
     def get_spike_nums_structure(self):
         # TODO: return a SpikeNumsStructure
@@ -161,7 +263,7 @@ class SpikeTrainsStructure(SpikeStructure):
         if saving_path is None:
             saving_path = self.patient.param.path_results
         np.savez(f'{saving_path}/{self.title}_spike_nums_ordered_{self.patient.patient_id}.npz',
-                 spike_trains=self.spike_data, microwire_labels=self.microwire_labels,
+                 spike_trains=self.spike_trains, microwire_labels=self.microwire_labels,
                  ordered_spike_trains=self.ordered_spike_data,
                  ordered_indices=self.ordered_indices, activity_threshold=self.activity_threshold,
                  cluster_labels=self.cluster_labels)
@@ -175,7 +277,7 @@ class SpikeNumsStructure(SpikeStructure):
     def __init__(self, patient, spike_nums, microwire_labels, cluster_labels, activity_threshold=None,
                  title=None, ordered_spike_nums=None, ordered_indices=None, one_sec=10 ** 6):
 
-        super().__init__(patient=patient, spike_data=spike_nums, microwire_labels=microwire_labels,
+        super().__init__(patient=patient, spike_nums=spike_nums, microwire_labels=microwire_labels,
                          cluster_labels=cluster_labels,
                          activity_threshold=activity_threshold, title=title,
                          ordered_indices=ordered_indices, ordered_spike_data=ordered_spike_nums,
@@ -185,7 +287,7 @@ class SpikeNumsStructure(SpikeStructure):
         if saving_path is None:
             saving_path = self.patient.param.path_results
         np.savez(f'{saving_path}/{self.title}_spike_nums_ordered_{self.patient.patient_id}.npz',
-                 spike_nums=self.spike_data, microwire_labels=self.microwire_labels,
+                 spike_nums=self.spike_nums, microwire_labels=self.microwire_labels,
                  ordered_spike_nums=self.ordered_spike_data,
                  ordered_indices=self.ordered_indices, activity_threshold=self.activity_threshold,
                  cluster_labels=self.cluster_labels)
@@ -526,14 +628,16 @@ class BonnPatient:
     def get_indices_of_sleep_stage(self, sleep_stage_name):
         return [i for i, ss in enumerate(self.sleep_stages) if ss.sleep_stage == sleep_stage_name]
 
-    def construct_spike_structure(self, spike_trains_format=True, sleep_stage_indices=None,
+    def construct_spike_structure(self, spike_trains_format=True, spike_nums_format=True,
+                                  sleep_stage_indices=None,
                                   sleep_stage_selection=None, channels_starting_by=None,
                                   channels_without_number=None, channels_with_number=None,
                                   title=None, keeping_only_SU=False):
         """
 
         :param sleep_stage_index: list of sleep_stage_index
-        :param spike_trains_format: if True, return a SpikeTrainsStructure, else SpikeNumsStructure
+        :param spike_trains_format: if True, will construct a spike_trains into Spiketructure
+        :param spike_nums_format: if True, will construct a spike_nums SpikeStructure
         :param channels: list of str, if empty list, take them all, otherwise take the one starting with the same
         name (like "RAH" take RAH1, RAH2 etc...., if just "R" take all microwire on the right)
         :param channels_to_study: full name without numbers
@@ -622,9 +726,12 @@ class BonnPatient:
                 nb_units_spike_nums += nb_units_to_keep
             else:
                 nb_units_spike_nums += len(self.spikes_time_by_microwire[micro_wire])
+
+        spike_trains = None
+        spike_nums = None
         if spike_trains_format:
             spike_trains = [np.zeros(0)] * nb_units_spike_nums
-        else:
+        if spike_nums_format:
             spike_nums = np.zeros((nb_units_spike_nums, 0), dtype="int8")
 
         for ss in sleep_stages_to_keep:
@@ -695,7 +802,7 @@ class BonnPatient:
                         else:
                             spike_trains[unit_index] = np.concatenate((spike_trains[unit_index], time_stamps))
                         # print(f"{unit_index}: len(time_stamps) {len(time_stamps)}")
-            else:
+            if spike_nums_format:
                 len_for_ss = int(max_time - min_time)
                 # print(f"len_for_ss {len_for_ss}")
                 # new index, using the min time stamp as a reference
@@ -750,18 +857,19 @@ class BonnPatient:
 
         # 1 = MU  2 = SU -1 = Artif.
         # 0 = Unassigned (is ignored)
-        if spike_trains_format:
-            # first transforming list as np.array
-            # for i, train in enumerate(spike_trains):
-            #     spike_trains[i] = np.array(spike_trains[i])
-            spike_struct = SpikeTrainsStructure(patient=self, spike_trains=spike_trains,
-                                                microwire_labels=micro_wire_labels,
-                                                cluster_labels=cluster_labels,
-                                                title=title)
-        else:
-            spike_struct = SpikeNumsStructure(patient=self, spike_nums=spike_nums, microwire_labels=micro_wire_labels,
-                                              cluster_labels=cluster_labels,
-                                              title=title)
+        # if spike_trains_format:
+        #     # first transforming list as np.array
+        #     # for i, train in enumerate(spike_trains):
+        #     #     spike_trains[i] = np.array(spike_trains[i])
+        #     spike_struct = SpikeTrainsStructure(patient=self, spike_trains=spike_trains,
+        #                                         microwire_labels=micro_wire_labels,
+        #                                         cluster_labels=cluster_labels,
+        #                                         title=title)
+        # else:
+        spike_struct = SpikeStructure(patient=self, spike_trains=spike_trains, spike_nums=spike_nums,
+                                      microwire_labels=micro_wire_labels,
+                                      cluster_labels=cluster_labels,
+                                      title=title)
         return spike_struct  # spike_nums, micro_wire_to_keep, channels_to_keep, labels
 
 
@@ -905,14 +1013,15 @@ def main():
         #                                                       channels_starting_by=["L"],
         #                                                       spike_trains_format=False)
         rem_indices = patient.get_indices_of_sleep_stage(sleep_stage_name='R')
-        spike_nums_struct = patient.construct_spike_structure(sleep_stage_indices=[rem_indices[0]],
-                                                              channels_starting_by=["L"],
-                                                              spike_trains_format=True,
-                                                              keeping_only_SU=True)
+        spike_struct = patient.construct_spike_structure(sleep_stage_indices=[rem_indices[0]],
+                                                         channels_starting_by=["L"],
+                                                         spike_trains_format=True,
+                                                         spike_nums_format=True,
+                                                         keeping_only_SU=True)
 
-        print(f"Nb units: {len(spike_nums_struct.spike_data)}")
-        for i, train in enumerate(spike_nums_struct.spike_data):
-            print(f"{spike_nums_struct.labels[i]}, nb spikes: {train.shape[0]}")
+        print(f"Nb units: {len(spike_struct.spike_trains)}")
+        for i, train in enumerate(spike_struct.spike_trains):
+            print(f"{spike_struct.labels[i]}, nb spikes: {train.shape[0]}")
 
         # Left_raster_plot_stage_2_046fn2_2018_08_22.21-47-13
         # spike_nums, micro_wires, channels, labels = patient.construct_spike_structure(sleep_stage_indices=[2],
@@ -922,24 +1031,39 @@ def main():
 
         decrease_factor = 4
 
-        spike_nums_struct.decrease_resolution(n=decrease_factor)
-        # spike_nums_struct.decrease_resolution(max_time=8)
+        spike_struct.decrease_resolution(n=decrease_factor)
+        # spike_nums_struct.decrease_resolution (max_time=8)
         # putting sliding window to 512 ms
         sliding_window_duration = 10 ** (6 - decrease_factor) // 2
-        activity_threshold = get_sce_detection_threshold(spike_nums=spike_nums_struct.spike_data,
+        activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
                                                          window_duration=sliding_window_duration,
                                                          spike_train_mode=True,
                                                          n_surrogate=20,
                                                          perc_threshold=95,
                                                          debug_mode=True)
-        spike_nums_struct.activity_threshold = activity_threshold
+        print(f"activity_threshold {activity_threshold}")
+        spike_struct.activity_threshold = activity_threshold
         param.activity_threshold = activity_threshold
 
+        # TODO: detect_sce_with_sliding_window with spike_trains
+        # sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_struct.spike_nums,
+        #                                                       window_duration=sliding_window_duration,
+        #                                                       perc_threshold=95,
+        #                                                       activity_threshold=activity_threshold,
+        #                                                       debug_mode=True)
+        # print(f"sce_with_sliding_window detected")
+        # cellsinpeak = sce_detection_result[2]
+
+        # cellsinpeak = np.zeros((nb_neurons, len(assemblies)))
+        # for i, s in enumerate(assemblies):
+        #     cellsinpeak[s, i] = 1
+
         # around 250 ms
-        param.time_inter_seq = spike_nums_struct.get_nb_times_by_ms(250,
-                                                                    as_int=True)  # 10 ** (6 - decrease_factor) // 4
-        param.min_duration_intra_seq = - spike_nums_struct.get_nb_times_by_ms(20,
-                                                                              as_int=True)  # -(10 ** (6 - decrease_factor)) // 40
+        param.time_inter_seq = spike_struct.get_nb_times_by_ms(250,
+                                                               as_int=True)  # 10 ** (6 - decrease_factor) // 4
+        param.min_duration_intra_seq = - spike_struct.get_nb_times_by_ms(20,
+                                                                         as_int=True)
+        # -(10 ** (6 - decrease_factor)) // 40
         # a sequence should be composed of at least one third of the neurons
         # param.min_len_seq = len(spike_nums_struct.spike_data) // 4
         param.min_len_seq = 5
@@ -949,23 +1073,23 @@ def main():
 
         print(f"param.min_len_seq {param.min_len_seq},  param.error_rate {param.error_rate}")
 
-        print(f"spike_nums_struct.activity_threshold {spike_nums_struct.activity_threshold}")
+        print(f"spike_nums_struct.activity_threshold {spike_struct.activity_threshold}")
 
         print("plot_spikes_raster")
 
         # if len(spike_nums_struct.spike_nums[0, :]) > 10**8:
         #     spike_nums_struct.spike_nums = spike_nums_struct.spike_nums[:, :10**7]
         if True:
-            plot_spikes_raster(spike_nums=spike_nums_struct.spike_data, param=patient.param,
+            plot_spikes_raster(spike_nums=spike_struct.spike_trains, param=patient.param,
                                spike_train_format=True,
                                title=f"raster plot {patient_id}",
                                file_name=f"{channels_selection}_test_spike_nums_{patient_id}",
-                               y_ticks_labels=spike_nums_struct.labels,
+                               y_ticks_labels=spike_struct.labels,
                                y_ticks_labels_size=4,
                                save_raster=True,
                                show_raster=False,
                                plot_with_amplitude=False,
-                               activity_threshold=spike_nums_struct.activity_threshold,
+                               activity_threshold=spike_struct.activity_threshold,
                                # 500 ms window
                                sliding_window_duration=sliding_window_duration,
                                show_sum_spikes_as_percentage=True,
@@ -975,7 +1099,7 @@ def main():
         # continue
 
         # 2128885
-        loss_score = loss_function_with_sliding_window(spike_nums=spike_nums_struct.spike_data,
+        loss_score = loss_function_with_sliding_window(spike_nums=spike_struct.spike_trains,
                                                        time_inter_seq=param.time_inter_seq,
                                                        spike_train_mode=True,
                                                        min_duration_intra_seq=param.min_duration_intra_seq,
@@ -983,14 +1107,14 @@ def main():
 
         print(f'raw loss_score: {np.round(loss_score, 4)}')
 
-        spike_nums_struct.spike_data = trains_module.from_spike_trains_to_spike_nums(spike_nums_struct.spike_data)
+        # spike_struct.spike_data = trains_module.from_spike_trains_to_spike_nums(spike_struct.spike_data)
 
-        best_seq, seq_dict = sort_it_and_plot_it(spike_nums_struct=spike_nums_struct, patient=patient, param=param,
+        best_seq, seq_dict = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient, param=param,
                                                  channels_selection=channels_selection,
                                                  sliding_window_duration=sliding_window_duration,
                                                  spike_train_format=False)
 
-        nb_cells = len(spike_nums_struct.spike_data)
+        nb_cells = len(spike_struct.spike_trains)
 
         print("#### REAL DATA ####")
         print(f"best_seq {best_seq}")
@@ -1006,20 +1130,20 @@ def main():
                     if neurons_sorted_real_data[cell] == 0:
                         neurons_sorted_real_data[cell] = 1
 
-        n_times = len(spike_nums_struct.spike_data[0, :])
+        n_times = len(spike_struct.spike_nums[0, :])
 
         print("#### SURROGATE DATA ####")
         n_surrogate = 2
         surrogate_data_result_for_stat = SortedDict()
         neurons_sorted_surrogate_data = np.zeros(nb_cells, dtype="uint16")
         for surrogate_number in np.arange(n_surrogate):
-            copy_spike_nums = np.copy(spike_nums_struct.spike_data)
+            copy_spike_nums = np.copy(spike_struct.spike_nums)
             for n, neuron_spikes in enumerate(copy_spike_nums):
                 # roll the data to a random displace number
                 copy_spike_nums[n, :] = np.roll(neuron_spikes, np.random.randint(1, n_times))
-            spike_nums_struct.spike_data = copy_spike_nums
+            spike_struct.spike_nums = copy_spike_nums
 
-            best_seq, seq_dict = sort_it_and_plot_it(spike_nums_struct=spike_nums_struct, patient=patient,
+            best_seq, seq_dict = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient,
                                                      param=param,
                                                      channels_selection=channels_selection,
                                                      title_option=f" surrogate {surrogate_number}",
@@ -1059,7 +1183,7 @@ def main():
     # data_dict = dict()
 
 
-def give_me_stat_on_sorting_seq_results(results_dict, neurons_sorted,title, param,
+def give_me_stat_on_sorting_seq_results(results_dict, neurons_sorted, title, param,
                                         results_dict_surrogate=None, neurons_sorted_surrogate=None):
     """
     Key will be the length of the sequence and value will be a list of int, representing the nb of rep
@@ -1082,7 +1206,7 @@ def give_me_stat_on_sorting_seq_results(results_dict, neurons_sorted,title, para
                 max_len = np.max((key, max_len))
 
         # key reprensents the length of a seq
-        for key in np.arange(min_len, max_len+1):
+        for key in np.arange(min_len, max_len + 1):
             nb_seq = None
             nb_seq_surrogate = None
             if key in results_dict:
@@ -1131,20 +1255,20 @@ def give_me_stat_on_sorting_seq_results(results_dict, neurons_sorted,title, para
             file.write(f"{str_to_write}")
 
 
-def sort_it_and_plot_it(spike_nums_struct, patient, param, channels_selection,
+def sort_it_and_plot_it(spike_struct, patient, param, channels_selection,
                         sliding_window_duration, title_option="",
                         spike_train_format=False,
                         debug_mode=False):
     if spike_train_format:
         return
-    seq_dict_tmp, best_seq = order_spike_nums_by_seq(spike_nums_struct.spike_data, param, with_printing=debug_mode)
+    seq_dict_tmp, best_seq = order_spike_nums_by_seq(spike_struct.spike_nums, param, with_printing=debug_mode)
     # best_seq == corresponding_cells_index
-    if best_seq is None:
-        print("no sorting order found")
-        ordered_spike_data = np.copy(spike_nums_struct.spike_data)
-    else:
-        ordered_spike_data = np.copy(spike_nums_struct.spike_data[best_seq, :])
-    spike_nums_struct.set_order(ordered_spike_data=ordered_spike_data, ordered_indices=best_seq)
+    # if best_seq is None:
+    #     print("no sorting order found")
+    #     ordered_spike_data = np.copy(spike_struct.spike_nums)
+    # else:
+    #     ordered_spike_data = np.copy(spike_struct.spike_nums[best_seq, :])
+    spike_struct.set_order(ordered_indices=best_seq)
 
     if debug_mode:
         print(f"best_seq {best_seq}")
@@ -1175,14 +1299,14 @@ def sort_it_and_plot_it(spike_nums_struct, patient, param, channels_selection,
     else:
         seq_dict = None
         seq_colors = None
-    ordered_spike_nums = ordered_spike_data
-    spike_nums_struct.ordered_spike_data = \
-        trains_module.from_spike_nums_to_spike_trains(spike_nums_struct.ordered_spike_data)
+    # ordered_spike_nums = ordered_spike_data
+    # spike_struct.ordered_spike_data = \
+    #     trains_module.from_spike_nums_to_spike_trains(spike_struct.ordered_spike_data)
 
-    loss_score = loss_function_with_sliding_window(spike_nums=spike_nums_struct.ordered_spike_data,
+    loss_score = loss_function_with_sliding_window(spike_nums=spike_struct.ordered_spike_nums,
                                                    time_inter_seq=param.time_inter_seq,
                                                    min_duration_intra_seq=param.min_duration_intra_seq,
-                                                   spike_train_mode=True,
+                                                   spike_train_mode=False,
                                                    debug_mode=True
                                                    )
     print(f'total loss_score ordered: {np.round(loss_score, 4)}')
@@ -1191,18 +1315,18 @@ def sort_it_and_plot_it(spike_nums_struct, patient, param, channels_selection,
     # np.savez(f'{param.path_results}/{channels_selection}_spike_nums_ordered_{patient_id}.npz',
     #          spike_nums_ordered=spike_nums_ordered, micro_wires_ordered=micro_wires_ordered)
 
-    plot_spikes_raster(spike_nums=ordered_spike_nums, param=patient.param,
+    plot_spikes_raster(spike_nums=spike_struct.ordered_spike_nums, param=patient.param,
                        title=f"raster plot ordered {patient.patient_id} {title_option}",
                        spike_train_format=False,
                        file_name=f"{channels_selection}_spike_nums_ordered_{patient.patient_id}{title_option}",
-                       y_ticks_labels=spike_nums_struct.ordered_labels,
+                       y_ticks_labels=spike_struct.ordered_labels,
                        y_ticks_labels_size=5,
                        save_raster=True,
                        show_raster=False,
                        sliding_window_duration=sliding_window_duration,
                        show_sum_spikes_as_percentage=True,
                        plot_with_amplitude=False,
-                       activity_threshold=spike_nums_struct.activity_threshold,
+                       activity_threshold=spike_struct.activity_threshold,
                        save_formats="png",
                        seq_times_to_color_dict=seq_dict,
                        seq_colors=seq_colors)
