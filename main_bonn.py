@@ -9,6 +9,7 @@ import os
 # add the one containing the folder pattern_discovery
 from pattern_discovery.seq_solver.markov_way import MarkovParameters
 import pattern_discovery.tools.param as p_disc_param
+import pattern_discovery.tools.misc as tools_misc
 from pattern_discovery.display.raster import plot_spikes_raster
 from pattern_discovery.tools.loss_function import loss_function_with_sliding_window
 import pattern_discovery.tools.trains as trains_module
@@ -1033,8 +1034,9 @@ def main():
 
         spike_struct.decrease_resolution(n=decrease_factor)
         # spike_nums_struct.decrease_resolution (max_time=8)
-        # putting sliding window to 512 ms
-        sliding_window_duration = 10 ** (6 - decrease_factor) // 2
+        # putting sliding window to 500 ms
+        sliding_window_duration = int(spike_struct.one_sec / 2) #  10 ** (6 - decrease_factor) // 2
+
         activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
                                                          window_duration=sliding_window_duration,
                                                          spike_train_mode=True,
@@ -1042,18 +1044,24 @@ def main():
                                                          perc_threshold=95,
                                                          debug_mode=True)
         print(f"activity_threshold {activity_threshold}")
+        print(f"sliding_window_duration {sliding_window_duration}")
         spike_struct.activity_threshold = activity_threshold
         param.activity_threshold = activity_threshold
 
         # TODO: detect_sce_with_sliding_window with spike_trains
-        # sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_struct.spike_nums,
-        #                                                       window_duration=sliding_window_duration,
-        #                                                       perc_threshold=95,
-        #                                                       activity_threshold=activity_threshold,
-        #                                                       debug_mode=True)
-        # print(f"sce_with_sliding_window detected")
-        # cellsinpeak = sce_detection_result[2]
-
+        sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_struct.spike_nums,
+                                                              window_duration=sliding_window_duration,
+                                                              perc_threshold=95,
+                                                              activity_threshold=activity_threshold,
+                                                              debug_mode=False)
+        print(f"sce_with_sliding_window detected")
+        cellsinpeak = sce_detection_result[2]
+        print(f"Nb SCE: {cellsinpeak.shape}")
+        print(f"Nb spikes by SCE: {np.sum(cellsinpeak, axis=0)}")
+        cells_isi = tools_misc.get_isi(spike_data=spike_struct.spike_trains, spike_trains_format=True)
+        for cell_index in np.arange(len(spike_struct.spike_trains)):
+            print(f"Cell {cell_index} median isi: {np.median(cells_isi[cell_index])}, "
+                  f"mean isi {np.mean(cells_isi[cell_index])}")
         # cellsinpeak = np.zeros((nb_neurons, len(assemblies)))
         # for i, s in enumerate(assemblies):
         #     cellsinpeak[s, i] = 1
