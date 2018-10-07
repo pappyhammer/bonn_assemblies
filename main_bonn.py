@@ -16,6 +16,7 @@ import pattern_discovery.tools.trains as trains_module
 from pattern_discovery.seq_solver.markov_way import order_spike_nums_by_seq
 from pattern_discovery.tools.sce_detection import get_sce_detection_threshold, detect_sce_with_sliding_window
 from sortedcontainers import SortedList, SortedDict
+from pattern_discovery.clustering.kmean_version.k_mean_clustering import co_var_first_and_clusters
 
 
 # TODO: see to use scipy.sparse in the future
@@ -475,52 +476,91 @@ class BonnPatient:
         for i, channel in enumerate(self.channel_info_by_microwire):
             print(f"micro {i} channel: {channel}")
 
-    def build_raster_for_each_stage_sleep(self, with_ordering=True, with_concatenation=False):
+    def build_raster_for_each_stage_sleep(self, decrease_factor=4,
+                                          with_ordering=True,
+                                          keeping_only_SU=False, with_concatenation=False):
         if not with_concatenation:
+            units_str = "SU_and_MU"
+            if keeping_only_SU:
+                units_str = "only_SU"
             # for each sleep stage, we print all units, the right hemisphere one and the left ones
             for s_index in np.arange(self.nb_sleep_stages):
                 for side in ["Left", "Right", "Left-Right"]:
                     if side == "Left-Right":
-                        spike_nums_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
-                                                                           title=f"index_{s_index}_ss_left_and_right")
+                        spike_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
+                                                                      title=f"index_{s_index}_ss_left_and_right_{units_str}",
+                                                                      spike_trains_format=True,
+                                                                      spike_nums_format=False,
+                                                                      keeping_only_SU=keeping_only_SU
+                                                                      )
                     else:
 
-                        spike_nums_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
-                                                                           channels_starting_by=[side[0]],
-                                                                           title=f"index_{s_index}_ss_{side}")
+                        spike_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
+                                                                      channels_starting_by=[side[0]],
+                                                                      title=f"index_{s_index}_ss_{side}_{units_str}",
+                                                                      spike_trains_format=True,
+                                                                      spike_nums_format=False,
+                                                                      keeping_only_SU=keeping_only_SU
+                                                                      )
                     sleep_stage = self.sleep_stages[s_index].sleep_stage
-                    plot_spikes_raster(spike_nums=spike_nums_struct.spike_nums, param=self.param,
-                                       title=f"Stage {sleep_stage} (index {s_index}) {side} channels {self.patient_id}",
-                                       file_name=f"{side}_raster_plot_stage_{sleep_stage}_index_{s_index}_{self.patient_id}",
-                                       y_ticks_labels=spike_nums_struct.labels,
-                                       y_ticks_labels_size=4,
-                                       save_raster=True,
-                                       show_raster=False,
-                                       sliding_window_duration=512,
-                                       show_sum_spikes_as_percentage=True,
-                                       plot_with_amplitude=False,
-                                       activity_threshold=None,
-                                       save_formats="pdf")
-                    if with_ordering:
-                        list_seq_dict, best_seq = order_spike_nums_by_seq(spike_nums_struct.spike_nums, self.param,
-                                                                          with_printing=True)
-                        # best_seq == corresponding_cells_index
-                        ordered_spike_nums = np.copy(spike_nums_struct.spike_nums[best_seq, :])
-                        spike_nums_struct.set_order(ordered_spike_nums=ordered_spike_nums, ordered_indices=best_seq)
-                        spike_nums_struct.save_data()
 
-                        plot_spikes_raster(spike_nums=spike_nums_struct.ordered_spike_nums, param=self.param,
-                                           title=f"Stage {sleep_stage} (index {s_index}) {side} channels {self.patient_id} ordered",
-                                           file_name=f"{side}_ordered_raster_plot_stage_{sleep_stage}_index_{s_index}_{self.patient_id}",
-                                           y_ticks_labels=spike_nums_struct.ordered_labels,
+                    spike_struct.decrease_resolution(n=decrease_factor)
+
+                    # putting sliding window to 250 ms
+                    sliding_window_duration = spike_struct.get_nb_times_by_ms(250,
+                                                                              as_int=True)
+
+                    activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
+                                                                     window_duration=sliding_window_duration,
+                                                                     spike_train_mode=True,
+                                                                     n_surrogate=20,
+                                                                     perc_threshold=95,
+                                                                     debug_mode=False)
+                    spike_struct.activity_threshold = activity_threshold
+                    self.param.activity_threshold = activity_threshold
+
+                    print("plot_spikes_raster")
+
+                    if True:
+                        plot_spikes_raster(spike_nums=spike_struct.spike_trains, param=self.param,
+                                           spike_train_format=True,
+                                           title=f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
+                                                 f"{self.patient_id}",
+                                           file_name=f"{side}_raster_plot_stage_{sleep_stage}_index_{s_index}"
+                                                     f"_{units_str}_{self.patient_id}",
+                                           y_ticks_labels=spike_struct.labels,
                                            y_ticks_labels_size=4,
                                            save_raster=True,
                                            show_raster=False,
-                                           sliding_window_duration=512,
-                                           show_sum_spikes_as_percentage=True,
                                            plot_with_amplitude=False,
-                                           activity_threshold=None,
+                                           activity_threshold=spike_struct.activity_threshold,
+                                           # 500 ms window
+                                           sliding_window_duration=sliding_window_duration,
+                                           show_sum_spikes_as_percentage=True,
+                                           spike_shape="|",
+                                           spike_shape_size=1,
                                            save_formats="pdf")
+
+                    # if with_ordering:
+                    #     list_seq_dict, best_seq = order_spike_nums_by_seq(spike_nums_struct.spike_nums, self.param,
+                    #                                                       with_printing=True)
+                    #     # best_seq == corresponding_cells_index
+                    #     ordered_spike_nums = np.copy(spike_nums_struct.spike_nums[best_seq, :])
+                    #     spike_nums_struct.set_order(ordered_spike_nums=ordered_spike_nums, ordered_indices=best_seq)
+                    #     spike_nums_struct.save_data()
+                    #
+                    #     plot_spikes_raster(spike_nums=spike_nums_struct.ordered_spike_nums, param=self.param,
+                    #                        title=f"Stage {sleep_stage} (index {s_index}) {side} channels {self.patient_id} ordered",
+                    #                        file_name=f"{side}_ordered_raster_plot_stage_{sleep_stage}_index_{s_index}_{self.patient_id}",
+                    #                        y_ticks_labels=spike_nums_struct.ordered_labels,
+                    #                        y_ticks_labels_size=4,
+                    #                        save_raster=True,
+                    #                        show_raster=False,
+                    #                        sliding_window_duration=512,
+                    #                        show_sum_spikes_as_percentage=True,
+                    #                        plot_with_amplitude=False,
+                    #                        activity_threshold=None,
+                    #                        save_formats="pdf")
             return
 
         # concatenating all commomn sleep stage
@@ -545,26 +585,26 @@ class BonnPatient:
                                plot_with_amplitude=False,
                                activity_threshold=None,
                                save_formats="pdf")
-            if with_ordering:
-                list_seq_dict, best_seq = order_spike_nums_by_seq(spike_nums_struct.spike_nums, self.param,
-                                                                  with_printing=True)
-                # best_seq == corresponding_cells_index
-                ordered_spike_nums = np.copy(spike_nums_struct.spike_nums[best_seq, :])
-                spike_nums_struct.set_order(ordered_spike_nums=ordered_spike_nums, ordered_indices=best_seq)
-                spike_nums_struct.save_data()
-
-                plot_spikes_raster(spike_nums=spike_nums_struct.ordered_spike_nums, param=self.param,
-                                   title=f"Stage {sleep_stage} {side} channel {self.patient_id} ordered",
-                                   file_name=f"{side}_ordered_raster_plot_stage_{sleep_stage}_{self.patient_id}",
-                                   y_ticks_labels=spike_nums_struct.ordered_labels,
-                                   y_ticks_labels_size=4,
-                                   save_raster=True,
-                                   show_raster=False,
-                                   sliding_window_duration=512,
-                                   show_sum_spikes_as_percentage=True,
-                                   plot_with_amplitude=False,
-                                   activity_threshold=None,
-                                   save_formats="pdf")
+            # if with_ordering:
+                # list_seq_dict, best_seq = order_spike_nums_by_seq(spike_nums_struct.spike_nums, self.param,
+                #                                                   with_printing=True)
+                # # best_seq == corresponding_cells_index
+                # ordered_spike_nums = np.copy(spike_nums_struct.spike_nums[best_seq, :])
+                # spike_nums_struct.set_order(ordered_spike_nums=ordered_spike_nums, ordered_indices=best_seq)
+                # spike_nums_struct.save_data()
+                #
+                # plot_spikes_raster(spike_nums=spike_nums_struct.ordered_spike_nums, param=self.param,
+                #                    title=f"Stage {sleep_stage} {side} channel {self.patient_id} ordered",
+                #                    file_name=f"{side}_ordered_raster_plot_stage_{sleep_stage}_{self.patient_id}",
+                #                    y_ticks_labels=spike_nums_struct.ordered_labels,
+                #                    y_ticks_labels_size=4,
+                #                    save_raster=True,
+                #                    show_raster=False,
+                #                    sliding_window_duration=512,
+                #                    show_sum_spikes_as_percentage=True,
+                #                    plot_with_amplitude=False,
+                #                    activity_threshold=None,
+                #                    save_formats="pdf")
 
     def print_sleep_stages_info(self, selected_indices=None):
         if selected_indices is None:
@@ -972,10 +1012,30 @@ def main():
                            max_branches=20, stop_if_twin=False,
                            no_reverse_seq=False, spike_rate_weight=False)
 
+    # --------------------------------------------------------------------------------
     # ------------------------------ param section ------------------------------
+    # --------------------------------------------------------------------------------
 
     patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
-    patient_ids = ["035fn2"]
+    patient_ids = ["034fn1"]
+
+    decrease_factor = 4
+
+    sliding_window_duration_in_ms = 250
+
+    # ### sequences paramaters ###
+    go_for_seq_detection = False
+    time_inter_seq_in_ms = 250
+    # negative time that can be there between 2 consecutive spikes of a sequence
+    min_duration_intra_seq_in_ms = 20
+
+    # -------- clustering params -----------
+    range_n_clusters_k_mean = np.arange(2, 10)
+
+
+    # --------------------------------------------------------------------------------
+    # ------------------------------ end param section ------------------------------
+    # --------------------------------------------------------------------------------
 
     for patient_id in patient_ids:
         print(f"patient_id {patient_id}")
@@ -1004,8 +1064,13 @@ def main():
         # patient.print_sleep_stages_info(selected_indices=[2])
         build_raster_for_each_stage = False
         if build_raster_for_each_stage:
-            patient.build_raster_for_each_stage_sleep(with_ordering=True, with_concatenation=False)
-            return
+            patient.build_raster_for_each_stage_sleep(with_ordering=False, with_concatenation=False,
+                                                      decrease_factor=4,
+                                                      keeping_only_SU=True)
+            patient.build_raster_for_each_stage_sleep(with_ordering=False, with_concatenation=False,
+                                                      decrease_factor=4,
+                                                      keeping_only_SU=False)
+            continue
 
         # spike_nums_struct = patient.construct_spike_structure(sleep_stage_selection=['2'],
         #                                                  channels_starting_by=["L"],
@@ -1014,7 +1079,8 @@ def main():
         #                                                       channels_starting_by=["L"],
         #                                                       spike_trains_format=False)
         rem_indices = patient.get_indices_of_sleep_stage(sleep_stage_name='R')
-        spike_struct = patient.construct_spike_structure(sleep_stage_indices=[rem_indices[0]],
+        stage_2_indices = patient.get_indices_of_sleep_stage(sleep_stage_name='2')
+        spike_struct = patient.construct_spike_structure(sleep_stage_indices=[stage_2_indices[0]],
                                                          channels_starting_by=["L"],
                                                          spike_trains_format=True,
                                                          spike_nums_format=True,
@@ -1028,65 +1094,33 @@ def main():
         # spike_nums, micro_wires, channels, labels = patient.construct_spike_structure(sleep_stage_indices=[2],
         #                              channels_without_number=["RAH", "RA", "RPHC", "REC", "RMH"])
         # for titles and filenames
-        channels_selection = "L"
-
-        decrease_factor = 4
+        channels_selection = "L stage 2"
 
         spike_struct.decrease_resolution(n=decrease_factor)
         # spike_nums_struct.decrease_resolution (max_time=8)
-        # putting sliding window to 500 ms
-        sliding_window_duration = int(spike_struct.one_sec / 2) #  10 ** (6 - decrease_factor) // 2
+
+        ###################################################################
+        ###################################################################
+        # ###########    SCE detection and clustering        ##############
+        ###################################################################
+        ###################################################################
+        # putting sliding window to 250 ms
+        sliding_window_duration = spike_struct.get_nb_times_by_ms(sliding_window_duration_in_ms,
+                                                               as_int=True)  #  10 ** (6 - decrease_factor) // 2
 
         activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
                                                          window_duration=sliding_window_duration,
                                                          spike_train_mode=True,
                                                          n_surrogate=20,
-                                                         perc_threshold=95,
+                                                         perc_threshold=99,
                                                          debug_mode=True)
         print(f"activity_threshold {activity_threshold}")
         print(f"sliding_window_duration {sliding_window_duration}")
         spike_struct.activity_threshold = activity_threshold
         param.activity_threshold = activity_threshold
 
-        # TODO: detect_sce_with_sliding_window with spike_trains
-        sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_struct.spike_nums,
-                                                              window_duration=sliding_window_duration,
-                                                              perc_threshold=95,
-                                                              activity_threshold=activity_threshold,
-                                                              debug_mode=False)
-        print(f"sce_with_sliding_window detected")
-        cellsinpeak = sce_detection_result[2]
-        print(f"Nb SCE: {cellsinpeak.shape}")
-        print(f"Nb spikes by SCE: {np.sum(cellsinpeak, axis=0)}")
-        cells_isi = tools_misc.get_isi(spike_data=spike_struct.spike_trains, spike_trains_format=True)
-        for cell_index in np.arange(len(spike_struct.spike_trains)):
-            print(f"Cell {cell_index} median isi: {np.median(cells_isi[cell_index])}, "
-                  f"mean isi {np.mean(cells_isi[cell_index])}")
-        # cellsinpeak = np.zeros((nb_neurons, len(assemblies)))
-        # for i, s in enumerate(assemblies):
-        #     cellsinpeak[s, i] = 1
-
-        # around 250 ms
-        param.time_inter_seq = spike_struct.get_nb_times_by_ms(250,
-                                                               as_int=True)  # 10 ** (6 - decrease_factor) // 4
-        param.min_duration_intra_seq = - spike_struct.get_nb_times_by_ms(20,
-                                                                         as_int=True)
-        # -(10 ** (6 - decrease_factor)) // 40
-        # a sequence should be composed of at least one third of the neurons
-        # param.min_len_seq = len(spike_nums_struct.spike_data) // 4
-        param.min_len_seq = 5
-        # param.error_rate = param.min_len_seq // 4
-        param.error_rate = 0
-        param.max_branches = 20
-
-        print(f"param.min_len_seq {param.min_len_seq},  param.error_rate {param.error_rate}")
-
-        print(f"spike_nums_struct.activity_threshold {spike_struct.activity_threshold}")
-
         print("plot_spikes_raster")
 
-        # if len(spike_nums_struct.spike_nums[0, :]) > 10**8:
-        #     spike_nums_struct.spike_nums = spike_nums_struct.spike_nums[:, :10**7]
         if True:
             plot_spikes_raster(spike_nums=spike_struct.spike_trains, param=patient.param,
                                spike_train_format=True,
@@ -1103,7 +1137,68 @@ def main():
                                show_sum_spikes_as_percentage=True,
                                spike_shape="|",
                                spike_shape_size=1,
-                               save_formats="png")
+                               save_formats="pdf")
+
+
+        # TODO: detect_sce_with_sliding_window with spike_trains
+        sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_struct.spike_nums,
+                                                              window_duration=sliding_window_duration,
+                                                              perc_threshold=95,
+                                                              activity_threshold=activity_threshold,
+                                                              debug_mode=False)
+        print(f"sce_with_sliding_window detected")
+        cellsinpeak = sce_detection_result[2]
+        print(f"Nb SCE: {cellsinpeak.shape}")
+        # print(f"Nb spikes by SCE: {np.sum(cellsinpeak, axis=0)}")
+        cells_isi = tools_misc.get_isi(spike_data=spike_struct.spike_trains, spike_trains_format=True)
+        for cell_index in np.arange(len(spike_struct.spike_trains)):
+            print(f"Cell {cell_index} median isi: {np.median(cells_isi[cell_index])}, "
+                  f"mean isi {np.mean(cells_isi[cell_index])}")
+
+        nb_neurons = len(cellsinpeak)
+
+        # return a dict of list of list of neurons, representing the best clusters
+        # (as many as nth_best_clusters).
+        # the key is the K from the k-mean
+
+        data_descr = f"{patient.patient_id} {channels_selection} sleep"
+
+        clusters_sce, cluster_labels_for_neurons = co_var_first_and_clusters(cells_in_sce=cellsinpeak, shuffling=True,
+                                                                             n_surrogate=50,
+                                                                             range_n_clusters=range_n_clusters_k_mean,
+                                                                             nth_best_clusters=-1,
+                                                                             plot_matrix=True,
+                                                                             data_str=data_descr,
+                                                                             path_results=path_results,
+                                                                             neurons_labels=spike_struct.labels)
+
+        ###################################################################
+        ###################################################################
+        # ##############    Sequences detection        ###################
+        ###################################################################
+        ###################################################################
+
+        if not go_for_seq_detection:
+            continue
+
+        # around 250 ms
+        param.time_inter_seq = spike_struct.get_nb_times_by_ms(time_inter_seq_in_ms,
+                                                               as_int=True)  # 10 ** (6 - decrease_factor) // 4
+        param.min_duration_intra_seq = - spike_struct.get_nb_times_by_ms(min_duration_intra_seq_in_ms,
+                                                                         as_int=True)
+        # -(10 ** (6 - decrease_factor)) // 40
+        # a sequence should be composed of at least one third of the neurons
+        # param.min_len_seq = len(spike_nums_struct.spike_data) // 4
+        param.min_len_seq = 5
+        # param.error_rate = param.min_len_seq // 4
+        param.error_rate = 0
+        param.max_branches = 20
+
+        print(f"param.min_len_seq {param.min_len_seq},  param.error_rate {param.error_rate}")
+
+        print(f"spike_nums_struct.activity_threshold {spike_struct.activity_threshold}")
+
+
         # continue
 
         # 2128885
