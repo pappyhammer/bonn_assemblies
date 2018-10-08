@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import seaborn as sns
 import numpy as np
 import hdf5storage
@@ -1029,8 +1030,8 @@ def main():
     # negative time that can be there between 2 consecutive spikes of a sequence
     min_duration_intra_seq_in_ms = 20
 
-    # -------- clustering params -----------
-    range_n_clusters_k_mean = np.arange(2, 10)
+    # -------- clustering params ------ -----
+    range_n_clusters_k_mean = np.arange(2, 9)
 
 
     # --------------------------------------------------------------------------------
@@ -1165,13 +1166,61 @@ def main():
 
         clusters_sce, cluster_labels_for_neurons = co_var_first_and_clusters(cells_in_sce=cellsinpeak, shuffling=True,
                                                                              n_surrogate=50,
+                                                                             fct_to_keep_best_silhouettes=np.mean,
                                                                              range_n_clusters=range_n_clusters_k_mean,
                                                                              nth_best_clusters=-1,
                                                                              plot_matrix=True,
                                                                              data_str=data_descr,
                                                                              path_results=path_results,
                                                                              neurons_labels=spike_struct.labels)
+        do_plot_raster_for_each_clusters = True
+        if do_plot_raster_for_each_clusters:
+            for n_cluster in range_n_clusters_k_mean:
+                clustered_spike_nums = np.copy(spike_struct.spike_nums)
+                cell_labels = []
+                cluster_labels = cluster_labels_for_neurons[n_cluster]
+                cluster_horizontal_thresholds = []
+                cells_to_highlight = []
+                cells_to_highlight_colors = []
+                start = 0
+                for k in np.arange(-1, np.max(cluster_labels) + 1):
+                    e = np.equal(cluster_labels, k)
+                    nb_k = np.sum(e)
+                    clustered_spike_nums[start:start + nb_k, :] = spike_struct.spike_nums[e, :]
+                    for index in np.where(e)[0]:
+                        cell_labels.append(spike_struct.labels[index])
+                    if k >= 0:
+                        color = cm.nipy_spectral(float(k+1) / (np.max(cluster_labels)+1))
+                        cell_indices = list(np.arange(start, start+nb_k))
+                        cells_to_highlight.extend(cell_indices)
+                        cells_to_highlight_colors.extend([color]*len(cell_indices))
+                    start += nb_k
+                    if (k + 1) < (np.max(cluster_labels) + 1):
+                        cluster_horizontal_thresholds.append(start)
 
+                plot_spikes_raster(spike_nums=clustered_spike_nums, param=patient.param,
+                                   spike_train_format=False,
+                                   title=f"{n_cluster} clusters raster plot {patient_id}",
+                                   file_name=f"{channels_selection}_test_spike_nums_{patient_id}_{n_cluster}_clusters",
+                                   y_ticks_labels=cell_labels,
+                                   y_ticks_labels_size=4,
+                                   save_raster=True,
+                                   show_raster=False,
+                                   plot_with_amplitude=False,
+                                   activity_threshold=spike_struct.activity_threshold,
+                                   span_cells_to_highlight=False,
+                                   raster_face_color='black',
+                                   cell_spikes_color='white',
+                                   horizontal_lines=np.array(cluster_horizontal_thresholds)-0.5,
+                                   horizontal_lines_colors=['white']*len(cluster_horizontal_thresholds),
+                                   horizontal_lines_sytle="dashed",
+                                   cells_to_highlight=cells_to_highlight,
+                                   cells_to_highlight_colors=cells_to_highlight_colors,
+                                   sliding_window_duration=sliding_window_duration,
+                                   show_sum_spikes_as_percentage=True,
+                                   spike_shape="|",
+                                   spike_shape_size=1,
+                                   save_formats="pdf")
         ###################################################################
         ###################################################################
         # ##############    Sequences detection        ###################
