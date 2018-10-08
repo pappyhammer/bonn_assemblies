@@ -1190,7 +1190,7 @@ def main():
                     for index in np.where(e)[0]:
                         cell_labels.append(spike_struct.labels[index])
                     if k >= 0:
-                        color = cm.nipy_spectral(float(k+1) / (np.max(cluster_labels)+1))
+                        color = cm.nipy_spectral(float(k+1) / n_cluster)
                         cell_indices = list(np.arange(start, start+nb_k))
                         cells_to_highlight.extend(cell_indices)
                         cells_to_highlight_colors.extend([color]*len(cell_indices))
