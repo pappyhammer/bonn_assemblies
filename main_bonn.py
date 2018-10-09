@@ -1159,12 +1159,13 @@ def main():
                                                               debug_mode=False)
         print(f"sce_with_sliding_window detected")
         cellsinpeak = sce_detection_result[2]
+        SCE_times = sce_detection_result[1]
         print(f"Nb SCE: {cellsinpeak.shape}")
         # print(f"Nb spikes by SCE: {np.sum(cellsinpeak, axis=0)}")
         cells_isi = tools_misc.get_isi(spike_data=spike_struct.spike_trains, spike_trains_format=True)
         for cell_index in np.arange(len(spike_struct.spike_trains)):
-            print(f"Cell {cell_index} median isi: {np.median(cells_isi[cell_index])}, "
-                  f"mean isi {np.mean(cells_isi[cell_index])}")
+            print(f"{spike_struct.labels[cell_index]} median isi: {np.round(np.median(cells_isi[cell_index]), 2)}, "
+                  f"mean isi {np.round(np.mean(cells_isi[cell_index]), 2)}")
 
         nb_neurons = len(cellsinpeak)
 
@@ -1176,7 +1177,7 @@ def main():
 
         clusters_sce, best_kmeans_by_cluster, m_cov_sces, cluster_labels_for_neurons, surrogate_percentiles = \
             co_var_first_and_clusters(cells_in_sce=cellsinpeak, shuffling=True,
-                                      n_surrogate=50,
+                                      n_surrogate=100,
                                       fct_to_keep_best_silhouettes=np.mean,
                                       range_n_clusters=range_n_clusters_k_mean,
                                       nth_best_clusters=-1,
@@ -1224,7 +1225,7 @@ def main():
 
                     # clusters display
                     inner_bottom = gridspec.GridSpecFromSubplotSpec(1, 3,
-                                                                 subplot_spec=outer[1], width_ratios=[6, 6, 10])
+                                                                 subplot_spec=outer[1], width_ratios=[6, 10, 6])
 
                     ax3 = fig.add_subplot(inner_bottom[0])
                     # ax2 contains the peak activity diagram
@@ -1254,15 +1255,16 @@ def main():
                                        spike_shape="|",
                                        spike_shape_size=1,
                                        save_formats="pdf",
-                                       axes_list=[ax1, ax2])
+                                       axes_list=[ax1, ax2],
+                                       SCE_times=SCE_times)
 
                     show_co_var_first_matrix(cells_in_peak=np.copy(cellsinpeak), m_sces=m_cov_sces,
                                              n_clusters=n_cluster, kmeans=best_kmeans_by_cluster[n_cluster],
                                              cluster_labels_for_neurons=cluster_labels_for_neurons[n_cluster],
                                              data_str=data_descr, path_results=path_results,
                                              show_silhouettes=True, neurons_labels=spike_struct.labels,
-                                             surrogate_silhouette_avg=surrogate_percentiles,
-                                             axes_list=[ax3, ax4, ax5], fig_to_use=fig, save_formats="pdf")
+                                             surrogate_silhouette_avg=surrogate_percentiles[n_cluster],
+                                             axes_list=[ax5, ax3, ax4], fig_to_use=fig, save_formats="pdf")
                     plt.close()
                 else:
                     plot_spikes_raster(spike_nums=clustered_spike_nums, param=patient.param,
