@@ -1030,9 +1030,34 @@ def main():
     patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
     patient_ids = ["034fn1"]
 
-    decrease_factor = 3
+    decrease_factor = 4
 
-    sliding_window_duration_in_ms = 250
+    sliding_window_duration_in_ms = 10  # 250
+    keeping_only_SU = True
+    # 100 ms sliding window
+    # 1000 surrogates 95th percentile of the max of each surrogate
+    # regarder temporalité in each SCE, faire pair-wise, regarder pente
+    # Garder k-mean avec la moyenne la plus élevée de Silhouette
+    # moyenne durée et distribution tous les events
+    # Faire Stats sur différentes thresholds, avec stats SCE
+    # t-NSE: pour représentation assemblée au fil des âges
+    # tester avec threshold plus bas
+    # Comparer cluster cells Sarah vs Arnaud: hypothèse: synchronie en bas âge retrouvée par Sarag sont hors SCE
+    # et prennent part aux SCE par la suite. 
+    # Julie Koening, Fabrice Bartolomei, Damian Battiglia
+    # to find event threshold
+    n_surrogate_activity_threshold = 100
+    perc_threshold = 95
+
+    # for clustering
+    with_cells_in_cluster_seq_sorted = True
+    do_fca_clustering = False
+    do_clustering = True
+
+    # kmean clustering
+    range_n_clusters_k_mean = np.arange(8, 9)
+    n_surrogate_k_mean = 20
+    with_shuffling = False
 
     # ### sequences paramaters ###
     go_for_seq_detection = False
@@ -1049,7 +1074,6 @@ def main():
         patient = BonnPatient(data_path=data_path, patient_id=patient_id, param=param)
         # patient.print_sleep_stages_info()
         # patient.print_channel_list()
-        # print(f"param.path_results {patient.param.path_results}")
         do_test = False
 
         if do_test:
@@ -1091,7 +1115,7 @@ def main():
                                                          channels_starting_by=["L"],
                                                          spike_trains_format=True,
                                                          spike_nums_format=True,
-                                                         keeping_only_SU=True)
+                                                         keeping_only_SU=keeping_only_SU)
 
         print(f"Nb units: {len(spike_struct.spike_trains)}")
         for i, train in enumerate(spike_struct.spike_trains):
@@ -1101,7 +1125,7 @@ def main():
         # spike_nums, micro_wires, channels, labels = patient.construct_spike_structure(sleep_stage_indices=[2],
         #                              channels_without_number=["RAH", "RA", "RPHC", "REC", "RMH"])
         # for titles and filenames
-        channels_selection = "L stage 2"
+        stage_descr = "L stage 2 index 0"
 
         spike_struct.decrease_resolution(n=decrease_factor)
         # spike_nums_struct.decrease_resolution (max_time=8)
@@ -1132,9 +1156,7 @@ def main():
         ###################################################################
         sliding_window_duration = spike_struct.get_nb_times_by_ms(sliding_window_duration_in_ms,
                                                                   as_int=True)
-        n_surrogate_activity_threshold = 50
 
-        perc_threshold = 99
         activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
                                                          window_duration=sliding_window_duration,
                                                          spike_train_mode=True,
@@ -1146,25 +1168,24 @@ def main():
         spike_struct.activity_threshold = activity_threshold
         param.activity_threshold = activity_threshold
 
-        print("plot_spikes_raster")
+        # print("plot_spikes_raster")
 
-        if True:
-            plot_spikes_raster(spike_nums=spike_struct.spike_trains, param=patient.param,
-                               spike_train_format=True,
-                               title=f"raster plot {patient_id}",
-                               file_name=f"{channels_selection}_test_spike_nums_{patient_id}",
-                               y_ticks_labels=spike_struct.labels,
-                               y_ticks_labels_size=4,
-                               save_raster=True,
-                               show_raster=False,
-                               plot_with_amplitude=False,
-                               activity_threshold=spike_struct.activity_threshold,
-                               # 500 ms window
-                               sliding_window_duration=sliding_window_duration,
-                               show_sum_spikes_as_percentage=True,
-                               spike_shape="|",
-                               spike_shape_size=1,
-                               save_formats="pdf")
+        plot_spikes_raster(spike_nums=spike_struct.spike_trains, param=patient.param,
+                           spike_train_format=True,
+                           title=f"raster plot {patient_id}",
+                           file_name=f"{stage_descr}_test_spike_nums_{patient_id}",
+                           y_ticks_labels=spike_struct.labels,
+                           y_ticks_labels_size=4,
+                           save_raster=True,
+                           show_raster=False,
+                           plot_with_amplitude=False,
+                           activity_threshold=spike_struct.activity_threshold,
+                           # 500 ms window
+                           sliding_window_duration=sliding_window_duration,
+                           show_sum_spikes_as_percentage=True,
+                           spike_shape="|",
+                           spike_shape_size=1,
+                           save_formats="pdf")
 
         # TODO: detect_sce_with_sliding_window with spike_trains
         sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_struct.spike_nums,
@@ -1189,57 +1210,53 @@ def main():
         # (as many as nth_best_clusters).
         # the key is the K from the k-mean
 
-        data_descr = f"{patient.patient_id} {channels_selection} sleep"
-        with_cells_in_cluster_seq_sorted=True
-        sarah_way = False
-        if sarah_way:
-            n_surrogate_fca = 20
-            # sigma=sliding_window_duration*2
-            sigma = sliding_window_duration * 0.1
-            """
-            # sigma=sliding_window_duration*4
-            current_cluster = [[[[[[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20], 12], 16], 19]]
-            merge_history = [[0, 5, 1.1111111111111112], [[0, 5], 1, 1.1111111111111112], [[[0, 5], 1], 2, 1.1111111111111112], [[[[0, 5], 1], 2], 3, 1.1111111111111112], [[[[[0, 5], 1], 2], 3], 4, 1.1111111111111112], [[[[[[0, 5], 1], 2], 3], 4], 6, 1.1111111111111112], [[[[[[[0, 5], 1], 2], 3], 4], 6], 7, 1.1111111111111112], [[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10, 1.1111111111111112], [[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8, 1.1111111111111112], [[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9, 1.1111111111111112], [[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11, 1.1111111111111112], [[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13, 1.1111111111111112], [[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14, 1.1111111111111112], [[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15, 1.1111111111111112], [[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17, 1.1111111111111112], [[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18, 1.0], [[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21, 1.0], [[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20, 0.77777777777777779], [[[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20], 12, 0.44444444444444442], [[[[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20], 12], 16, 0.22222222222222221], [[[[[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20], 12], 16], 19, 0.0]]
+        data_descr = f"{patient.patient_id} {stage_descr} sleep"
+        if do_clustering:
+            if do_fca_clustering:
+                n_surrogate_fca = 20
+                # sigma=sliding_window_duration*2
+                sigma = sliding_window_duration * 0.1
+                """
+                # sigma=sliding_window_duration*4
+                current_cluster = [[[[[[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20], 12], 16], 19]]
+                merge_history = [[0, 5, 1.1111111111111112], [[0, 5], 1, 1.1111111111111112], [[[0, 5], 1], 2, 1.1111111111111112], [[[[0, 5], 1], 2], 3, 1.1111111111111112], [[[[[0, 5], 1], 2], 3], 4, 1.1111111111111112], [[[[[[0, 5], 1], 2], 3], 4], 6, 1.1111111111111112], [[[[[[[0, 5], 1], 2], 3], 4], 6], 7, 1.1111111111111112], [[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10, 1.1111111111111112], [[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8, 1.1111111111111112], [[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9, 1.1111111111111112], [[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11, 1.1111111111111112], [[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13, 1.1111111111111112], [[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14, 1.1111111111111112], [[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15, 1.1111111111111112], [[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17, 1.1111111111111112], [[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18, 1.0], [[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21, 1.0], [[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20, 0.77777777777777779], [[[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20], 12, 0.44444444444444442], [[[[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20], 12], 16, 0.22222222222222221], [[[[[[[[[[[[[[[[[[[[[0, 5], 1], 2], 3], 4], 6], 7], 10], 8], 9], 11], 13], 14], 15], 17], 18], 21], 20], 12], 16], 19, 0.0]]
+    
+               # sigma=sliding_window_duration/10
+               current_cluster =  [[[[[[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18], 16], [[[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19]], 12]], 20]]
+                merge_history =  [[2, 4, 1.1111111111111112], [0, [2, 4], 1.1111111111111112], [7, 11, 1.1111111111111112], [[7, 11], 13, 1.1111111111111112], [6, [[7, 11], 13], 1.1111111111111112], [[0, [2, 4]], 5, 1.0], [[6, [[7, 11], 13]], 14, 1.0], [[[0, [2, 4]], 5], 1, 0.88888888888888884], [[[6, [[7, 11], 13]], 14], 15, 0.88888888888888884], [[[[0, [2, 4]], 5], 1], 3, 0.33333333333333331], [[[[[0, [2, 4]], 5], 1], 3], 17, 0.66666666666666663], [[[[[[0, [2, 4]], 5], 1], 3], 17], 21, 0.33333333333333331], [[[[6, [[7, 11], 13]], 14], 15], 9, 0.33333333333333331], [[[[[6, [[7, 11], 13]], 14], 15], 9], 10, 0.22222222222222221], [8, 19, 0.22222222222222221], [[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19], 1.0], [[[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19]], 12, 0.44444444444444442], [[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18, 0.1111111111111111], [[[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18], 16, 0.22222222222222221], [[[[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18], 16], [[[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19]], 12], 0.0], [[[[[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18], 16], [[[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19]], 12]], 20, 0.0]]
+    
+                """
+                compute_and_plot_clusters_raster_fca_version(spike_trains=spike_struct.spike_trains,
+                                                             spike_nums=spike_struct.spike_nums,
+                                                             data_descr=data_descr, param=param,
+                                                             sliding_window_duration=sliding_window_duration,
+                                                             SCE_times=SCE_times, sce_times_numbers=sce_times_numbers,
+                                                             perc_threshold=perc_threshold,
+                                                             n_surrogate_activity_threshold=
+                                                             n_surrogate_activity_threshold,
+                                                             sigma=sigma, n_surrogate_fca=n_surrogate_fca,
+                                                             labels=spike_struct.labels,
+                                                             activity_threshold=activity_threshold,
+                                                             fca_early_stop=True,
+                                                             with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
 
-           # sigma=sliding_window_duration/10
-           current_cluster =  [[[[[[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18], 16], [[[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19]], 12]], 20]]
-            merge_history =  [[2, 4, 1.1111111111111112], [0, [2, 4], 1.1111111111111112], [7, 11, 1.1111111111111112], [[7, 11], 13, 1.1111111111111112], [6, [[7, 11], 13], 1.1111111111111112], [[0, [2, 4]], 5, 1.0], [[6, [[7, 11], 13]], 14, 1.0], [[[0, [2, 4]], 5], 1, 0.88888888888888884], [[[6, [[7, 11], 13]], 14], 15, 0.88888888888888884], [[[[0, [2, 4]], 5], 1], 3, 0.33333333333333331], [[[[[0, [2, 4]], 5], 1], 3], 17, 0.66666666666666663], [[[[[[0, [2, 4]], 5], 1], 3], 17], 21, 0.33333333333333331], [[[[6, [[7, 11], 13]], 14], 15], 9, 0.33333333333333331], [[[[[6, [[7, 11], 13]], 14], 15], 9], 10, 0.22222222222222221], [8, 19, 0.22222222222222221], [[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19], 1.0], [[[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19]], 12, 0.44444444444444442], [[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18, 0.1111111111111111], [[[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18], 16, 0.22222222222222221], [[[[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18], 16], [[[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19]], 12], 0.0], [[[[[[[[[[0, [2, 4]], 5], 1], 3], 17], 21], 18], 16], [[[[[[[6, [[7, 11], 13]], 14], 15], 9], 10], [8, 19]], 12]], 20, 0.0]]
-
-            """
-            compute_and_plot_clusters_raster_fca_version(spike_trains=spike_struct.spike_trains,
-                                                         spike_nums=spike_struct.spike_nums,
-                                                         data_descr=data_descr, param=param,
-                                                         sliding_window_duration=sliding_window_duration,
-                                                         SCE_times=SCE_times, sce_times_numbers=sce_times_numbers,
-                                                         perc_threshold=perc_threshold,
-                                                         n_surrogate_activity_threshold=
-                                                         n_surrogate_activity_threshold,
-                                                         sigma=sigma, n_surrogate_fca=n_surrogate_fca,
-                                                         labels=spike_struct.labels,
-                                                         activity_threshold=activity_threshold,
-                                                         fca_early_stop=True,
-                                                         with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
-
-        else:
-            range_n_clusters_k_mean = np.arange(3, 10)
-            n_surrogate_k_mean = 20
-            with_shuffling = False
-            compute_and_plot_clusters_raster_kmean_version(labels=spike_struct.labels,
-                                                           activity_threshold=spike_struct.activity_threshold,
-                                                           range_n_clusters_k_mean=range_n_clusters_k_mean,
-                                                           n_surrogate_k_mean=n_surrogate_k_mean,
-                                                           with_shuffling=with_shuffling,
-                                                           spike_nums_to_use=spike_struct.spike_nums,
-                                                           cellsinpeak=cellsinpeak,
-                                                           data_descr=data_descr,
-                                                           param=param,
-                                                           sliding_window_duration=sliding_window_duration,
-                                                           SCE_times=SCE_times, sce_times_numbers=sce_times_numbers,
-                                                           perc_threshold=perc_threshold,
-                                                           n_surrogate_activity_threshold=
-                                                           n_surrogate_activity_threshold,
-                                                           debug_mode=True,
-                                                           with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
+            else:
+                compute_and_plot_clusters_raster_kmean_version(labels=spike_struct.labels,
+                                                               activity_threshold=spike_struct.activity_threshold,
+                                                               range_n_clusters_k_mean=range_n_clusters_k_mean,
+                                                               n_surrogate_k_mean=n_surrogate_k_mean,
+                                                               with_shuffling=with_shuffling,
+                                                               spike_nums_to_use=spike_struct.spike_nums,
+                                                               cellsinpeak=cellsinpeak,
+                                                               data_descr=data_descr,
+                                                               param=param,
+                                                               sliding_window_duration=sliding_window_duration,
+                                                               SCE_times=SCE_times, sce_times_numbers=sce_times_numbers,
+                                                               perc_threshold=perc_threshold,
+                                                               n_surrogate_activity_threshold=
+                                                               n_surrogate_activity_threshold,
+                                                               debug_mode=True,
+                                                               with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
 
         ###################################################################
         ###################################################################
@@ -1268,7 +1285,7 @@ def main():
         # spike_struct.spike_data = trains_module.from_spike_trains_to_spike_nums(spike_struct.spike_data)
 
         best_seq, seq_dict = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient, param=param,
-                                                 channels_selection=channels_selection,
+                                                 channels_selection=stage_descr,
                                                  sliding_window_duration=sliding_window_duration,
                                                  spike_train_format=False)
 
@@ -1303,7 +1320,7 @@ def main():
 
             best_seq, seq_dict = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient,
                                                      param=param,
-                                                     channels_selection=channels_selection,
+                                                     channels_selection=stage_descr,
                                                      title_option=f" surrogate {surrogate_number}",
                                                      sliding_window_duration=sliding_window_duration,
                                                      spike_train_format=False)
