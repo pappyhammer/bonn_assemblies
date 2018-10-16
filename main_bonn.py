@@ -21,13 +21,8 @@ import pattern_discovery.tools.trains as trains_module
 from pattern_discovery.seq_solver.markov_way import order_spike_nums_by_seq
 from pattern_discovery.tools.sce_detection import get_sce_detection_threshold, detect_sce_with_sliding_window
 from sortedcontainers import SortedList, SortedDict
-from pattern_discovery.clustering.kmean_version.k_mean_clustering import co_var_first_and_clusters
-from pattern_discovery.clustering.kmean_version.k_mean_clustering import show_co_var_first_matrix
-from pattern_discovery.clustering.kmean_version.k_mean_clustering import save_stat_SCE_and_cluster_k_mean_version
-from pattern_discovery.clustering.fca.fca import functional_clustering_algorithm
 from pattern_discovery.clustering.fca.fca import compute_and_plot_clusters_raster_fca_version
 import pattern_discovery.clustering.fca.fca as fca
-from pattern_discovery.clustering.cluster_tools import detect_cluster_activations_with_sliding_window
 from pattern_discovery.clustering.kmean_version.k_mean_clustering import compute_and_plot_clusters_raster_kmean_version
 
 
@@ -1032,32 +1027,23 @@ def main():
 
     decrease_factor = 4
 
-    sliding_window_duration_in_ms = 10  # 250
+    sliding_window_duration_in_ms = 100  # 250
     keeping_only_SU = True
     # 100 ms sliding window
-    # 1000 surrogates 95th percentile of the max of each surrogate
-    # regarder temporalité in each SCE, faire pair-wise, regarder pente
-    # Garder k-mean avec la moyenne la plus élevée de Silhouette
-    # moyenne durée et distribution tous les events
-    # Faire Stats sur différentes thresholds, avec stats SCE
-    # t-NSE: pour représentation assemblée au fil des âges
-    # tester avec threshold plus bas
-    # Comparer cluster cells Sarah vs Arnaud: hypothèse: synchronie en bas âge retrouvée par Sarag sont hors SCE
-    # et prennent part aux SCE par la suite. 
-    # Julie Koening, Fabrice Bartolomei, Damian Battiglia
+
     # to find event threshold
     n_surrogate_activity_threshold = 100
-    perc_threshold = 95
+    perc_threshold = 99
 
     # for clustering
-    with_cells_in_cluster_seq_sorted = True
+    with_cells_in_cluster_seq_sorted = False
     do_fca_clustering = False
     do_clustering = True
 
     # kmean clustering
     range_n_clusters_k_mean = np.arange(8, 9)
     n_surrogate_k_mean = 20
-    with_shuffling = False
+    with_shuffling = True
 
     # ### sequences paramaters ###
     go_for_seq_detection = False
@@ -1159,6 +1145,7 @@ def main():
 
         activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
                                                          window_duration=sliding_window_duration,
+                                                         use_max_of_each_surrogate=False,
                                                          spike_train_mode=True,
                                                          n_surrogate=n_surrogate_activity_threshold,
                                                          perc_threshold=perc_threshold,
