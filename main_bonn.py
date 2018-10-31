@@ -1309,14 +1309,14 @@ def main():
 
         sce_times_bool_to_use = sce_times_bool if use_sce_times_for_pattern_search else None
         best_seq, seq_dict_real_data = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient, param=param,
-                                                 channels_selection=stage_descr,
-                                                 sliding_window_duration=sliding_window_duration,
-                                                 spike_train_format=False,
-                                                 sce_times_bool=sce_times_bool_to_use,
-                                                 debug_mode=True,
-                                                 use_only_uniformity_method=use_only_uniformity_method,
-                                                 use_loss_score_to_keep_the_best_from_tree=
-                                                 use_loss_score_to_keep_the_best_from_tree)
+                                                           channels_selection=stage_descr,
+                                                           sliding_window_duration=sliding_window_duration,
+                                                           spike_train_format=False,
+                                                           sce_times_bool=sce_times_bool_to_use,
+                                                           debug_mode=True,
+                                                           use_only_uniformity_method=use_only_uniformity_method,
+                                                           use_loss_score_to_keep_the_best_from_tree=
+                                                           use_loss_score_to_keep_the_best_from_tree)
 
         nb_cells = len(spike_struct.spike_trains)
 
@@ -1355,14 +1355,14 @@ def main():
             spike_struct.spike_nums = copy_spike_nums
 
             best_seq, seq_dict_surrogate = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient,
-                                                     param=param,
-                                                     channels_selection=stage_descr,
-                                                     title_option=f" surrogate {surrogate_number}",
-                                                     sliding_window_duration=sliding_window_duration,
-                                                     spike_train_format=False,
-                                                     use_only_uniformity_method=use_only_uniformity_method,
-                                                     use_loss_score_to_keep_the_best_from_tree=
-                                                     use_loss_score_to_keep_the_best_from_tree)
+                                                               param=param,
+                                                               channels_selection=stage_descr,
+                                                               title_option=f" surrogate {surrogate_number}",
+                                                               sliding_window_duration=sliding_window_duration,
+                                                               spike_train_format=False,
+                                                               use_only_uniformity_method=use_only_uniformity_method,
+                                                               use_loss_score_to_keep_the_best_from_tree=
+                                                               use_loss_score_to_keep_the_best_from_tree)
 
             print(f"best_seq {best_seq}")
 
@@ -1382,11 +1382,6 @@ def main():
         print("")
         print("")
 
-        significant_threshold_by_seq_len = dict()
-
-        for key, value in surrogate_data_result_for_stat.items():
-            significant_threshold_by_seq_len[key] = np.percentile(value, 95)
-
         give_me_stat_on_sorting_seq_results(results_dict=real_data_result_for_stat,
                                             neurons_sorted=neurons_sorted_real_data,
                                             title="%%%% DATA SET STAT %%%%%", param=param,
@@ -1397,6 +1392,12 @@ def main():
                                             use_only_uniformity_method=use_only_uniformity_method,
                                             use_loss_score_to_keep_the_best_from_tree=
                                             use_loss_score_to_keep_the_best_from_tree)
+
+
+        significant_threshold_by_seq_len = dict()
+
+        for key, value in surrogate_data_result_for_stat.items():
+            significant_threshold_by_seq_len[key] = np.percentile(value, 95)
 
         # filtering seq to keep only the significant one
         significant_seq_dict = dict()
@@ -1428,7 +1429,8 @@ def main():
                            spike_shape_size=1,
                            seq_times_to_color_dict=significant_seq_dict,
                            link_seq_color=colors_for_seq_list,
-                           link_seq_line_width=0.7,
+                           link_seq_line_width=0.5,
+                           jitter_links_range=5,
                            min_len_links_seq=3)
 
         return
@@ -1527,7 +1529,8 @@ def sort_it_and_plot_it(spike_struct, patient, param, channels_selection,
                        spike_shape_size=1,
                        seq_times_to_color_dict=seq_dict,
                        link_seq_color=colors_for_seq_list,
-                       link_seq_line_width=0.7,
+                       link_seq_line_width=0.5,
+                       jitter_links_range=5,
                        min_len_links_seq=3)
 
     return best_seq, seq_dict
