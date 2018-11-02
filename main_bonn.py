@@ -10,7 +10,7 @@ import os
 # then show all, then select the interpreter and lick on the more right icon to display a list of folder and
 # add the one containing the folder pattern_discovery
 from pattern_discovery.seq_solver.markov_way import MarkovParameters
-from pattern_discovery.seq_solver.markov_way import give_me_stat_on_sorting_seq_results
+from pattern_discovery.seq_solver.markov_way import find_significant_patterns
 import pattern_discovery.tools.param as p_disc_param
 import pattern_discovery.tools.misc as tools_misc
 from pattern_discovery.display.raster import plot_spikes_raster
@@ -1015,7 +1015,7 @@ def main():
 
     # ------------------------------ param section ------------------------------
     # param will be set later when the spike_nums will have been constructed
-    param = BonnParameters(time_str=time_str, path_results=path_results, error_rate=2,
+    param = BonnParameters(time_str=time_str, path_results=path_results, error_rate=0.2,
                            time_inter_seq=100, min_duration_intra_seq=-5, min_len_seq=10, min_rep_nb=4,
                            max_branches=20, stop_if_twin=False,
                            no_reverse_seq=False, spike_rate_weight=False)
@@ -1053,6 +1053,7 @@ def main():
     use_only_uniformity_method = True
     use_loss_score_to_keep_the_best_from_tree = False
     use_sce_times_for_pattern_search = True
+    use_ordered_spike_nums_for_surrogate=True
     time_inter_seq_in_ms = 500
     # negative time that can be there between 2 consecutive spikes of a sequence
     min_duration_intra_seq_in_ms = 20
@@ -1139,7 +1140,7 @@ def main():
         # param.min_len_seq = len(spike_nums_struct.spike_data) // 4
         param.min_len_seq = 3
         # param.error_rate = param.min_len_seq // 4
-        param.error_rate = 0
+        param.error_rate = 0.25
         param.max_branches = 10
 
         ###################################################################
@@ -1305,133 +1306,149 @@ def main():
 
         print(f'raw loss_score: {np.round(loss_score, 4)}')
 
-        # spike_struct.spike_data = trains_module.from_spike_trains_to_spike_nums(spike_struct.spike_data)
-
         sce_times_bool_to_use = sce_times_bool if use_sce_times_for_pattern_search else None
-        best_seq, seq_dict_real_data = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient, param=param,
-                                                           channels_selection=stage_descr,
-                                                           sliding_window_duration=sliding_window_duration,
-                                                           spike_train_format=False,
-                                                           sce_times_bool=sce_times_bool_to_use,
-                                                           debug_mode=True,
-                                                           use_only_uniformity_method=use_only_uniformity_method,
-                                                           use_loss_score_to_keep_the_best_from_tree=
-                                                           use_loss_score_to_keep_the_best_from_tree)
 
-        nb_cells = len(spike_struct.spike_trains)
+        find_significant_patterns(spike_nums=spike_struct.spike_nums, param=param,
+                                  activity_threshold=activity_threshold,
+                                  sliding_window_duration=sliding_window_duration,
+                                  data_id=patient.patient_id, n_surrogate=n_surrogate_for_seq_sorting,
+                                  extra_file_name=stage_descr, debug_mode=False, without_raw_plot=True,
+                                  labels=spike_struct.labels,
+                                  sce_times_bool=sce_times_bool_to_use,
+                                  use_ordered_spike_nums_for_surrogate=use_ordered_spike_nums_for_surrogate,
+                                  use_only_uniformity_method=use_only_uniformity_method,
+                                  use_loss_score_to_keep_the_best_from_tree=
+                                  use_loss_score_to_keep_the_best_from_tree,
+                                  spike_shape="o",
+                                  spike_shape_size=1,
+                                  jitter_links_range=5)
 
-        print("#### REAL DATA ####")
-        print(f"best_seq {best_seq}")
-        real_data_result_for_stat = SortedDict()
-        neurons_sorted_real_data = np.zeros(nb_cells, dtype="uint16")
-        if seq_dict_real_data is not None:
-            for key, value in seq_dict_real_data.items():
-                new_index_key = []
-                labels_key = []
-                for i in key:
-                    new_index_key.append(best_seq[i])
-                    labels_key.append(spike_struct.ordered_labels[i])
-                print(f"len: {len(key)}, new_seq: {key}, labels: {labels_key}, rep: {len(value)}")
-                if len(key) not in real_data_result_for_stat:
-                    real_data_result_for_stat[len(key)] = []
-                real_data_result_for_stat[len(key)].append(len(value))
-                for cell in key:
-                    if neurons_sorted_real_data[cell] == 0:
-                        neurons_sorted_real_data[cell] = 1
-
-        n_times = len(spike_struct.spike_nums[0, :])
-        backup_ordered_spike_nums = np.copy(spike_struct.ordered_spike_nums)
-        backup_ordered_labels = spike_struct.ordered_labels[:]
-
-        print("#### SURROGATE DATA ####")
-        n_surrogate = n_surrogate_for_seq_sorting
-        surrogate_data_result_for_stat = SortedDict()
-        neurons_sorted_surrogate_data = np.zeros(nb_cells, dtype="uint16")
-        for surrogate_number in np.arange(n_surrogate):
-            copy_spike_nums = np.copy(spike_struct.spike_nums)
-            for n, neuron_spikes in enumerate(copy_spike_nums):
-                # roll the data to a random displace number
-                copy_spike_nums[n, :] = np.roll(neuron_spikes, np.random.randint(1, n_times))
-            spike_struct.spike_nums = copy_spike_nums
-
-            best_seq, seq_dict_surrogate = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient,
-                                                               param=param,
-                                                               channels_selection=stage_descr,
-                                                               title_option=f" surrogate {surrogate_number}",
-                                                               sliding_window_duration=sliding_window_duration,
-                                                               spike_train_format=False,
-                                                               use_only_uniformity_method=use_only_uniformity_method,
-                                                               use_loss_score_to_keep_the_best_from_tree=
-                                                               use_loss_score_to_keep_the_best_from_tree)
-
-            print(f"best_seq {best_seq}")
-
-            mask = np.zeros(nb_cells, dtype="bool")
-            if seq_dict_surrogate is not None:
-                for key, value in seq_dict_surrogate.items():
-                    print(f"len: {len(key)}, seq: {key}, rep: {len(value)}")
-                    if len(key) not in surrogate_data_result_for_stat:
-                        surrogate_data_result_for_stat[len(key)] = []
-                    surrogate_data_result_for_stat[len(key)].append(len(value))
-                    for cell in key:
-                        mask[cell] = True
-                neurons_sorted_surrogate_data[mask] += 1
-        # min_time, max_time = trains_module.get_range_train_list(spike_nums)
-        # surrogate_data_set = create_surrogate_dataset(train_list=spike_nums, nsurrogate=n_surrogate,
-        #                                               min_value=min_time, max_value=max_time)
-        print("")
-        print("")
-
-        give_me_stat_on_sorting_seq_results(results_dict=real_data_result_for_stat,
-                                            neurons_sorted=neurons_sorted_real_data,
-                                            title="%%%% DATA SET STAT %%%%%", param=param,
-                                            results_dict_surrogate=surrogate_data_result_for_stat,
-                                            neurons_sorted_surrogate=neurons_sorted_surrogate_data,
-                                            n_surrogate=n_surrogate,
-                                            use_sce_times_for_pattern_search=(sce_times_bool is not None),
-                                            use_only_uniformity_method=use_only_uniformity_method,
-                                            use_loss_score_to_keep_the_best_from_tree=
-                                            use_loss_score_to_keep_the_best_from_tree)
-
-
-        significant_threshold_by_seq_len = dict()
-
-        for key, value in surrogate_data_result_for_stat.items():
-            significant_threshold_by_seq_len[key] = np.percentile(value, 95)
-
-        # filtering seq to keep only the significant one
-        significant_seq_dict = dict()
-        for cells, times in seq_dict_real_data.items():
-            if len(cells) in significant_threshold_by_seq_len:
-                # print(f"len(cells) {len(cells)}, threshold: {significant_threshold_by_seq_len[key]}")
-                if len(times) >= significant_threshold_by_seq_len[len(cells)]:
-                    significant_seq_dict[cells] = times
-            else:
-                significant_seq_dict[cells] = times
-
-        title_option = "significant_seq"
-        colors_for_seq_list = ["blue", "red", "limegreen", "grey", "orange", "cornflowerblue", "yellow", "seagreen",
-                               "magenta"]
-        plot_spikes_raster(spike_nums=backup_ordered_spike_nums, param=patient.param,
-                           title=f"raster plot ordered {patient.patient_id} {title_option}",
-                           spike_train_format=False,
-                           file_name=f"{stage_descr}_spike_nums_ordered_{patient.patient_id}_{title_option}",
-                           y_ticks_labels=backup_ordered_labels,
-                           y_ticks_labels_size=5,
-                           save_raster=True,
-                           show_raster=False,
-                           sliding_window_duration=sliding_window_duration,
-                           show_sum_spikes_as_percentage=True,
-                           plot_with_amplitude=False,
-                           activity_threshold=spike_struct.activity_threshold,
-                           save_formats="pdf",
-                           spike_shape="o",
-                           spike_shape_size=1,
-                           seq_times_to_color_dict=significant_seq_dict,
-                           link_seq_color=colors_for_seq_list,
-                           link_seq_line_width=0.5,
-                           jitter_links_range=5,
-                           min_len_links_seq=3)
+        # spike_struct.spike_data = trains_module.from_spike_trains_to_spike_nums(spike_struct.spike_data)
+        #
+        # best_seq, seq_dict_real_data = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient, param=param,
+        #                                                    channels_selection=stage_descr,
+        #                                                    sliding_window_duration=sliding_window_duration,
+        #                                                    spike_train_format=False,
+        #                                                    sce_times_bool=sce_times_bool_to_use,
+        #                                                    debug_mode=True,
+        #                                                    use_only_uniformity_method=use_only_uniformity_method,
+        #                                                    use_loss_score_to_keep_the_best_from_tree=
+        #                                                    use_loss_score_to_keep_the_best_from_tree)
+        #
+        # nb_cells = len(spike_struct.spike_trains)
+        #
+        # print("#### REAL DATA ####")
+        # print(f"best_seq {best_seq}")
+        # real_data_result_for_stat = SortedDict()
+        # neurons_sorted_real_data = np.zeros(nb_cells, dtype="uint16")
+        # if seq_dict_real_data is not None:
+        #     for key, value in seq_dict_real_data.items():
+        #         new_index_key = []
+        #         labels_key = []
+        #         for i in key:
+        #             new_index_key.append(best_seq[i])
+        #             labels_key.append(spike_struct.ordered_labels[i])
+        #         print(f"len: {len(key)}, new_seq: {key}, labels: {labels_key}, rep: {len(value)}")
+        #         if len(key) not in real_data_result_for_stat:
+        #             real_data_result_for_stat[len(key)] = []
+        #         real_data_result_for_stat[len(key)].append(len(value))
+        #         for cell in key:
+        #             if neurons_sorted_real_data[cell] == 0:
+        #                 neurons_sorted_real_data[cell] = 1
+        #
+        # n_times = len(spike_struct.spike_nums[0, :])
+        # backup_ordered_spike_nums = np.copy(spike_struct.ordered_spike_nums)
+        # backup_ordered_labels = spike_struct.ordered_labels[:]
+        #
+        # print("#### SURROGATE DATA ####")
+        # n_surrogate = n_surrogate_for_seq_sorting
+        # surrogate_data_result_for_stat = SortedDict()
+        # neurons_sorted_surrogate_data = np.zeros(nb_cells, dtype="uint16")
+        # for surrogate_number in np.arange(n_surrogate):
+        #     copy_spike_nums = np.copy(spike_struct.spike_nums)
+        #     for n, neuron_spikes in enumerate(copy_spike_nums):
+        #         # roll the data to a random displace number
+        #         copy_spike_nums[n, :] = np.roll(neuron_spikes, np.random.randint(1, n_times))
+        #     spike_struct.spike_nums = copy_spike_nums
+        #
+        #     best_seq, seq_dict_surrogate = sort_it_and_plot_it(spike_struct=spike_struct, patient=patient,
+        #                                                        param=param,
+        #                                                        channels_selection=stage_descr,
+        #                                                        title_option=f" surrogate {surrogate_number}",
+        #                                                        sliding_window_duration=sliding_window_duration,
+        #                                                        spike_train_format=False,
+        #                                                        use_only_uniformity_method=use_only_uniformity_method,
+        #                                                        use_loss_score_to_keep_the_best_from_tree=
+        #                                                        use_loss_score_to_keep_the_best_from_tree)
+        #
+        #     print(f"best_seq {best_seq}")
+        #
+        #     mask = np.zeros(nb_cells, dtype="bool")
+        #     if seq_dict_surrogate is not None:
+        #         for key, value in seq_dict_surrogate.items():
+        #             print(f"len: {len(key)}, seq: {key}, rep: {len(value)}")
+        #             if len(key) not in surrogate_data_result_for_stat:
+        #                 surrogate_data_result_for_stat[len(key)] = []
+        #             surrogate_data_result_for_stat[len(key)].append(len(value))
+        #             for cell in key:
+        #                 mask[cell] = True
+        #         neurons_sorted_surrogate_data[mask] += 1
+        # # min_time, max_time = trains_module.get_range_train_list(spike_nums)
+        # # surrogate_data_set = create_surrogate_dataset(train_list=spike_nums, nsurrogate=n_surrogate,
+        # #                                               min_value=min_time, max_value=max_time)
+        # print("")
+        # print("")
+        #
+        # give_me_stat_on_sorting_seq_results(results_dict=real_data_result_for_stat,
+        #                                     neurons_sorted=neurons_sorted_real_data,
+        #                                     title="%%%% DATA SET STAT %%%%%", param=param,
+        #                                     results_dict_surrogate=surrogate_data_result_for_stat,
+        #                                     neurons_sorted_surrogate=neurons_sorted_surrogate_data,
+        #                                     n_surrogate=n_surrogate,
+        #                                     use_sce_times_for_pattern_search=(sce_times_bool is not None),
+        #                                     use_only_uniformity_method=use_only_uniformity_method,
+        #                                     use_loss_score_to_keep_the_best_from_tree=
+        #                                     use_loss_score_to_keep_the_best_from_tree)
+        #
+        #
+        # significant_threshold_by_seq_len = dict()
+        #
+        # for key, value in surrogate_data_result_for_stat.items():
+        #     significant_threshold_by_seq_len[key] = np.percentile(value, 95)
+        #
+        # # filtering seq to keep only the significant one
+        # significant_seq_dict = dict()
+        # for cells, times in seq_dict_real_data.items():
+        #     if len(cells) in significant_threshold_by_seq_len:
+        #         # print(f"len(cells) {len(cells)}, threshold: {significant_threshold_by_seq_len[key]}")
+        #         if len(times) >= significant_threshold_by_seq_len[len(cells)]:
+        #             significant_seq_dict[cells] = times
+        #     else:
+        #         significant_seq_dict[cells] = times
+        #
+        # title_option = "significant_seq"
+        # colors_for_seq_list = ["blue", "red", "limegreen", "grey", "orange", "cornflowerblue", "yellow", "seagreen",
+        #                        "magenta"]
+        # plot_spikes_raster(spike_nums=backup_ordered_spike_nums, param=patient.param,
+        #                    title=f"raster plot ordered {patient.patient_id} {title_option}",
+        #                    spike_train_format=False,
+        #                    file_name=f"{stage_descr}_spike_nums_ordered_{patient.patient_id}_{title_option}",
+        #                    y_ticks_labels=backup_ordered_labels,
+        #                    y_ticks_labels_size=5,
+        #                    save_raster=True,
+        #                    show_raster=False,
+        #                    sliding_window_duration=sliding_window_duration,
+        #                    show_sum_spikes_as_percentage=True,
+        #                    plot_with_amplitude=False,
+        #                    activity_threshold=spike_struct.activity_threshold,
+        #                    save_formats="pdf",
+        #                    spike_shape="o",
+        #                    spike_shape_size=1,
+        #                    seq_times_to_color_dict=significant_seq_dict,
+        #                    link_seq_color=colors_for_seq_list,
+        #                    link_seq_line_width=0.5,
+        #                    jitter_links_range=5,
+        #                    min_len_links_seq=3)
 
         return
         # spike_nums_struct.save_data()
