@@ -1,0 +1,1 @@
+root_path=/Users/pappyhammer/Documents/academique/these_inmed/bonn_assemblies/

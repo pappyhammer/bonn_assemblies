@@ -1005,7 +1005,15 @@ def save_data(channels_selection, patient_id, param,
 
 
 def main():
-    root_path = "/Users/pappyhammer/Documents/academique/these_inmed/bonn_assemblies/"
+    root_path = None
+    with open("param_bonn.txt", "r", encoding='UTF-8') as file:
+        for nb_line, line in enumerate(file):
+            line_list = line.split('=')
+            root_path = line_list[1]
+    if root_path is None:
+        raise Exception("Root path is None")
+
+    # root_path=/Users/pappyhammer/Documents/academique/these_inmed/bonn_assemblies/
     data_path = root_path + "one_hour_sleep/"
     path_results_raw = root_path + "results_bonn/"
 
@@ -1047,7 +1055,7 @@ def main():
     do_clustering = True
 
     # kmean clustering
-    range_n_clusters_k_mean = np.arange(2, 20)
+    range_n_clusters_k_mean = np.arange(3, 11)
     n_surrogate_k_mean = 20
     keep_only_the_best_kmean_cluster = False
     # shuffling is necessary to select the significant clusters
@@ -1112,9 +1120,11 @@ def main():
         #                                                       spike_trains_format=False)
         rem_indices = patient.get_indices_of_sleep_stage(sleep_stage_name='R')
         stage_2_indices = patient.get_indices_of_sleep_stage(sleep_stage_name='2')
+        print(f"stage_2_indices {stage_2_indices}")
+        # raise Exception("toto")
 
         # put that is inside this for loop in a function
-        for stage_indice in stage_2_indices:
+        for stage_indice in stage_2_indices[2:]:
             spike_struct = patient.construct_spike_structure(sleep_stage_indices=[stage_indice],
                                                              channels_starting_by=["L"],
                                                              spike_trains_format=True,
