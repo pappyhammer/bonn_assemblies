@@ -694,7 +694,7 @@ class BonnPatient:
         """
         # don't put non-assigned clusters
         only_SU_and_MU = True
-
+        # toto
         micro_wire_to_keep = []
         if (channels_starting_by is None) and (channels_without_number is None) and (channels_with_number is None):
             micro_wire_to_keep = self.available_micro_wires
@@ -863,6 +863,9 @@ class BonnPatient:
                     # print(f"micro_wire {micro_wire}, time_stamps-min_time {time_stamps-min_time}")
                 micro_wires_spikes_time_stamps = new_micro_wires_spikes_time_stamps
 
+
+                print(f"nb_units_spike_nums {nb_units_spike_nums}, spike_nums.shape[1] {spike_nums.shape[1]}, "
+                      f"len_for_ss {len_for_ss}")
                 new_spike_nums = np.zeros((nb_units_spike_nums, (spike_nums.shape[1] + len_for_ss + 1)), dtype="int8")
                 new_spike_nums[:, :spike_nums.shape[1]] = spike_nums
                 for micro_wire, units_time_stamps_dict in micro_wires_spikes_time_stamps.items():
@@ -1034,6 +1037,8 @@ def main():
 
     patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
     patient_ids = ["034fn1"]
+    patient_ids = ["052fn2"]
+    patient_ids = ["035fn2"] # memory issue
 
     decrease_factor = 4
 
@@ -1042,7 +1047,7 @@ def main():
     # 100 ms sliding window
 
     # to find event threshold
-    n_surrogate_activity_threshold = 50
+    n_surrogate_activity_threshold = 500
     perc_threshold = 95
 
     debug_mode = False
@@ -1118,15 +1123,19 @@ def main():
         # spike_nums_struct = patient.construct_spike_structure(sleep_stage_indices=[2],
         #                                                       channels_starting_by=["L"],
         #                                                       spike_trains_format=False)
-        rem_indices = patient.get_indices_of_sleep_stage(sleep_stage_name='R')
-        stage_2_indices = patient.get_indices_of_sleep_stage(sleep_stage_name='2')
-        print(f"stage_2_indices {stage_2_indices}")
+        # rem_indices = patient.get_indices_of_sleep_stage(sleep_stage_name='R')
+        # stage_2_indices = patient.get_indices_of_sleep_stage(sleep_stage_name='2')
+        # print(f"stage_2_indices {stage_2_indices}")
         # raise Exception("toto")
 
         # put that is inside this for loop in a function
-        for stage_indice in stage_2_indices[2:]:
+        # for stage_indice in stage_2_indices[2:]:
+        for stage_indice in np.arange(len(patient.sleep_stages)):
+            # if stage_indice < 7:
+            #     continue
+            side_to_analyse = "L"
             spike_struct = patient.construct_spike_structure(sleep_stage_indices=[stage_indice],
-                                                             channels_starting_by=["L"],
+                                                             channels_starting_by=[side_to_analyse],
                                                              spike_trains_format=True,
                                                              spike_nums_format=True,
                                                              keeping_only_SU=keeping_only_SU)
@@ -1139,7 +1148,10 @@ def main():
             # spike_nums, micro_wires, channels, labels = patient.construct_spike_structure(sleep_stage_indices=[2],
             #                              channels_without_number=["RAH", "RA", "RPHC", "REC", "RMH"])
             # for titles and filenames
-            stage_descr = f"L stage 2 index {stage_indice}"
+            stage_descr = f"{side_to_analyse} stage {patient.sleep_stages[stage_indice].sleep_stage} index {stage_indice}"
+            print("")
+            print(f"### patient_id {patient_id}: {stage_descr}")
+            print("")
 
             spike_struct.decrease_resolution(n=decrease_factor)
             # spike_nums_struct.decrease_resolution (max_time=8)
@@ -1177,7 +1189,7 @@ def main():
                                                              spike_train_mode=True,
                                                              n_surrogate=n_surrogate_activity_threshold,
                                                              perc_threshold=perc_threshold,
-                                                             debug_mode=True)
+                                                             debug_mode=False)
             print(f"activity_threshold {activity_threshold}")
             print(f"sliding_window_duration {sliding_window_duration}")
             spike_struct.activity_threshold = activity_threshold
