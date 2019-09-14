@@ -27,6 +27,11 @@ import pattern_discovery.clustering.fca.fca as fca
 from pattern_discovery.clustering.kmean_version.k_mean_clustering import compute_and_plot_clusters_raster_kmean_version
 from pattern_discovery.seq_solver.markov_way import find_sequences_in_ordered_spike_nums
 
+import neo
+import quantities as pq
+import elephant.conversion as elephant_conv
+# import elephant.cell_assembly_detection as cad
+from cell_assembly_detection import cell_assembly_detection
 
 # TODO: see to use scipy.sparse in the future
 
@@ -63,7 +68,7 @@ class SleepStage:
         result += f"start_time  {self.start_time}, "
         result += f"stop_time  {self.stop_time}, \n"
         result += f"duration (usec)  {self.duration}, "
-        result += f"duration (sec)  {self.duration / 1000000 }, "
+        result += f"duration (sec)  {self.duration / 1000000}, "
         result += f"duration (min)  {(self.duration / 1000000) / 60}"
         result += f",\n conversion_datetime  {self.conversion_datetime}, "
         result += f"conversion_timestamp  {self.conversion_timestamp}, "
@@ -401,7 +406,7 @@ class BonnPatient:
         # print(f"conversion_datetime {conversion_datetime}")
         # print(f"conversion_timestamp {conversion_timestamp[0][0]}")
         # print(f"conversion_timestamp int ? {isinstance(conversion_timestamp[0][0], int)}")
-        print(f"total duration (min): {(total_duration/1000000)/60}")
+        print(f"total duration (min): {(total_duration / 1000000) / 60}")
         # print_mat_file_content(sleep_stages_file)
         self.available_micro_wires = []
         for file_in_dir in files_in_dir:
@@ -460,12 +465,13 @@ class BonnPatient:
                     # keep the spikes of the corresponding cluster
                     mask = np.zeros(len(cluster_class[:, 1]), dtype="bool")
                     mask[np.where(original_spikes_cluster_by_microwire == index_cluster)[0]] = True
-                    # timestamp is in microsecond
+                    # timstamps are float, it's needed to multiple by 10^3 to get the real value,
+                    # represented as microseconds
                     self.spikes_time_by_microwire[microwire_number][index_cluster] = \
                         (cluster_class[mask, 1] * 1000)
                     # .astype(int)
                     # print(f"cluster_class[mask, 1] {cluster_class[mask, 1]}")
-                    # print(f"cluster_class[mask, 1] {cluster_class[mask, 1][0] - int(cluster_class[mask, 1][0])}")
+                    # print(f"- cluster_class[mask, 1] {cluster_class[mask, 1][0] - int(cluster_class[mask, 1][0])}")
                     self.n_units += 1
 
                 if microwire_number < 0:
@@ -484,9 +490,315 @@ class BonnPatient:
         for i, channel in enumerate(self.channel_info_by_microwire):
             print(f"micro {i} channel: {channel}")
 
+    def elephant_cad(self, path_results, time_str, sliding_window_ms,
+                     keeping_only_SU=False, with_concatenation=False,
+                     all_sleep_stages_in_order=False, save_formats="pdf"):
+        # must be >= 2
+        maxlag = 2
+        alpha = 0.05 # 0.05
+        test_fake_data=False
+
+        new_dir = f"{self.patient_id}_maxlag_{maxlag}_bin_{sliding_window_ms}_{time_str}"
+        path_results = os.path.join(path_results, new_dir)
+        os.mkdir(path_results)
+
+        if not with_concatenation:
+            for keeping_only_SU in [True, False]:
+                units_str = "SU_and_MU"
+                if keeping_only_SU:
+                    units_str = "only_SU"
+                # for each sleep stage, we print all units, the right hemisphere one and the left ones
+                for s_index in np.arange(self.nb_sleep_stages):
+                    for side in ["Left", "Right", "Left-Right"]:
+                        if side == "Left-Right":
+                            spike_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
+                                                                          title=f"index_{s_index}_ss_left_and_right_{units_str}",
+                                                                          spike_trains_format=True,
+                                                                          spike_nums_format=False,
+                                                                          keeping_only_SU=keeping_only_SU,
+                                                                          )
+                        else:
+
+                            spike_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
+                                                                          channels_starting_by=[side[0]],
+                                                                          title=f"index_{s_index}_ss_{side}_{units_str}",
+                                                                          spike_trains_format=True,
+                                                                          spike_nums_format=False,
+                                                                          keeping_only_SU=keeping_only_SU
+                                                                          )
+                        sleep_stage = self.sleep_stages[s_index].sleep_stage
+
+                        # first we create a spike_trains in the neo format
+                        spike_trains = []
+                        n_cells = len(spike_struct.spike_trains)
+                        t_start = None
+                        t_stop = None
+                        for cell in np.arange(n_cells):
+                            spike_train = spike_struct.spike_trains[cell]
+                            # convert frames in ms
+                            spike_train = spike_train / 1000
+                            spike_trains.append(spike_train)
+                            if t_start is None:
+                                t_start = spike_train[0]
+                            else:
+                                t_start = min(t_start, spike_train[0])
+                            if t_stop is None:
+                                t_stop = spike_train[-1]
+                            else:
+                                t_stop = max(t_stop, spike_train[-1])
+                        duration_sec = (t_stop - t_start) / 1000
+                        title = f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
+                        f"{self.patient_id}, duration {np.round(duration_sec, 3)}",
+                        print(f"***********  {title}  ***********")
+
+                        if test_fake_data:
+                            n_cells = 20
+                            spike_trains = []
+                            t_start = 0.
+                            t_stop = 60*5*1000
+
+                            for cell_index in np.arange(3):
+                                n_spikes = 50
+                                spike_train = np.zeros(n_spikes)
+
+                                for spike in range(n_spikes):
+                                    spike_train[spike] = (spike+1)*5500 + np.random.randint(1, 80)
+
+                                spike_trains.append(spike_train)
+
+                            for cell_index in np.arange(3, 20):
+                                n_spikes = 100
+                                spike_train = np.zeros(n_spikes)
+
+                                for spike in range(n_spikes):
+                                    spike_train[spike] = (spike+1)*2900 + + np.random.randint(1, 80)
+
+                                spike_trains.append(spike_train)
+
+
+                        neo_spike_trains = []
+                        for cell in np.arange(n_cells):
+                            spike_train = spike_trains[cell]
+                            # print(f"n_spikes: {spike_struct.labels[cell]}: {len(spike_train)}")
+                            neo_spike_train = neo.SpikeTrain(times=spike_train, units='ms',
+                                                             t_start=t_start,
+                                                             t_stop=t_stop)
+                            neo_spike_trains.append(neo_spike_train)
+
+                        binsize = sliding_window_ms * pq.ms
+                        # print(f'binsize {binsize}')
+                        spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=binsize)
+
+                        """
+                           A list of lists for each spike train (i.e., rows of the binned matrix), 
+                           that in turn contains for each spike the index into the binned matrix where this spike enters.
+                        """
+                        spike_indices_in_bins = spike_trains_binned.spike_indices
+                        patterns_cad = cell_assembly_detection(data=spike_trains_binned, maxlag=maxlag,
+                                                               same_config_cut=False,
+                                                               alpha=alpha,
+                                                               min_occ=1, significance_pruning=True,
+                                                               verbose=True)
+                        # print(f"patterns_cad {patterns_cad}")
+
+
+                        # print(f"spike_indices_in_bins {spike_indices_in_bins}")
+                        print(f"n assemblies : {len(patterns_cad)}")
+                        biggest_cell_ass = 0
+                        for ass_index, patterns in enumerate(patterns_cad):
+                            print(f"########## assembly {ass_index} ##########")
+                            labels_assembly = []
+                            for order_index, cell_index in enumerate(patterns['neurons']):
+                                labels_assembly.append(spike_struct.labels[cell_index])
+                            biggest_cell_ass = max(biggest_cell_ass, len(patterns['neurons']))
+                            print(f"{len(patterns['neurons'])} neurons: {labels_assembly}")
+                            print(f"lags {patterns['lags']}")
+                            for order_index, cell_index in enumerate(patterns['neurons']):
+                                rep_ass = patterns['signature'][order_index][1]
+                                print(f"{spike_struct.labels[cell_index]}: {rep_ass} rep in assembly "
+                                      f"vs {len(spike_trains[cell_index])} spikes, "
+                                      f"n bins {len(np.unique(spike_indices_in_bins[cell_index]))}")
+                                # print(f", "
+                                #       f"n spikes: {len(spike_indices_in_bins[cell_index])}")
+                        print(f"///// N cells max in a cell assembly: {biggest_cell_ass}")
+                        print("")
+
+                        """
+                        patterns_cad
+                        contains the assemblies detected for the binsize chosen each assembly is a dictionary with attributes: 
+                        ‘neurons’ : vector of units taking part to the assembly
+                
+                        (unit order correspond to the agglomeration order)
+                
+                        ‘lag’ : vector of time lags lag[z] is the activation delay between
+                        neurons[1] and neurons[z+1]
+                
+                        ‘pvalue’ : vector of pvalues. pvalue[z] is the p-value of the
+                        statistical test between performed adding neurons[z+1] to the neurons[1:z]
+                
+                        ‘times’ : assembly activation time. It reports how many times the
+                        complete assembly activates in that bin. time always refers to the activation of the first listed assembly element 
+                        (neurons[1]), that doesn’t necessarily corresponds to the first unit firing. 
+                        The format is identified by the variable bool_times_format.
+                
+                        ‘signature’ : array of two entries (z,c). The first is the number of
+                        neurons participating in the assembly (size), the second is number of assembly occurrences.
+                        """
+
+                        # qualitative 12 colors : http://colorbrewer2.org/?type=qualitative&scheme=Paired&n=12
+                        colors = ['#a6cee3', '#1f78b4', '#b2df8a', '#33a02c', '#fb9a99', '#e31a1c', '#fdbf6f',
+                                  '#ff7f00', '#cab2d6', '#6a3d9a', '#ffff99', '#b15928']
+                        cells_to_highlight_colors = []
+                        cells_to_highlight = []
+                        cell_new_order = []
+                        all_cells = np.arange(n_cells)
+                        cell_index_so_far = 0
+                        for ca_index, cell_assembly in enumerate(patterns_cad):
+                            n_cells_in_ca = 0
+                            for neu in cell_assembly['neurons']:
+                                # a cell can be in more than one assembly
+                                if neu not in cell_new_order:
+                                    cell_new_order.append(neu)
+                                    n_cells_in_ca += 1
+                            cells_to_highlight.extend(np.arange(cell_index_so_far, cell_index_so_far + n_cells_in_ca))
+                            cell_index_so_far += n_cells_in_ca
+                            cells_to_highlight_colors.extend([colors[ca_index % len(colors)]] * n_cells_in_ca)
+
+                        cell_new_order.extend(list(np.setdiff1d(all_cells, cell_new_order)))
+                        cell_new_order = np.array(cell_new_order)
+                        ordered_spike_trains = []
+                        if test_fake_data:
+                            y_labels = np.arange(n_cells)
+                            cell_new_order = np.arange(n_cells)
+                        else:
+                            y_labels = []
+                            for cell_index in cell_new_order:
+                                ordered_spike_trains.append(spike_trains[cell_index])
+                                y_labels.append(spike_struct.labels[cell_index])
+                        # plot_spikes_raster(spike_nums=ordered_spike_trains,
+                        #                    path_results=path_results,
+                        #                    spike_train_format=True,
+                        #                    title=f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
+                        #                          f"{self.patient_id}",
+                        #                    file_name=f"cad_elephant_{side}_raster_plot_stage_{sleep_stage}_index_{s_index}"
+                        #                              f"_{units_str}_{self.patient_id}",
+                        #                    y_ticks_labels=y_labels,
+                        #                    y_ticks_labels_size=2,
+                        #                    dpi=200,
+                        #                    save_raster=True,
+                        #                    show_raster=False,
+                        #                    plot_with_amplitude=False,
+                        #                    without_activity_sum=True,
+                        #                    show_sum_spikes_as_percentage=False,
+                        #                    cells_to_highlight=cells_to_highlight,
+                        #                    cells_to_highlight_colors=cells_to_highlight_colors,
+                        #                    span_area_only_on_raster=False,
+                        #                    spike_shape=".",
+                        #                    spike_shape_size=0.5,
+                        #                    # spike_shape='o',
+                        #                    # spike_shape_size=0.05,
+                        #                    save_formats=["pdf", "png"])
+
+                        if test_fake_data:
+                            background_color = "black"
+                            fig, ax = plt.subplots(nrows=1, ncols=1,
+                                                   figsize=(90, 30))
+                            fig.patch.set_facecolor(background_color)
+                            ax.set_facecolor(background_color)
+                            for st_idx, spike_train in enumerate(spike_trains):
+                                new_st_idx = np.where(cell_new_order == st_idx)[0][0]
+                                ax.plot(spike_train, [new_st_idx] * len(spike_train), '|', color="white")
+
+                            y_ticks_labels_color = "white"
+                            x_ticks_labels_color = "white"
+                            ax.yaxis.label.set_color(y_ticks_labels_color)
+                            ax.xaxis.label.set_color(x_ticks_labels_color)
+                            ax.tick_params(axis='y', colors=y_ticks_labels_color)
+                            ax.tick_params(axis='x', colors=x_ticks_labels_color)
+                            ax.set_yticks(np.arange(n_cells))
+                            ax.set_yticklabels(y_labels[:])
+                            plt.ylim([-1, n_cells])
+                            plt.xlabel('time (ms)')
+                            plt.ylabel('neurons ids')
+                            plt.title(f"Fake")
+                            show_fig = True
+                            if show_fig:
+                                plt.show()
+
+                        for pattern_index, patterns in enumerate(patterns_cad):
+                            if len(patterns['neurons']) < 3:
+                                continue
+
+                            cell_new_order = []
+                            all_cells = np.arange(n_cells)
+                            cell_new_order.extend(patterns['neurons'])
+                            cell_new_order.extend(list(np.setdiff1d(all_cells, cell_new_order)))
+                            cell_new_order = np.array(cell_new_order)
+
+                            background_color = "black"
+                            fig, ax = plt.subplots(nrows=1, ncols=1,
+                                                   figsize=(90, 30))
+                            fig.patch.set_facecolor(background_color)
+                            ax.set_facecolor(background_color)
+                            for neu in patterns['neurons']:
+                                new_neu_index = np.where(cell_new_order == neu)[0][0]
+                                # color = colors[pattern_index % len(colors)]
+                                color = "red"
+                                ax.plot(t_start+(patterns['times'] * int(binsize)),
+                                            [new_neu_index] * len(patterns['times']), 'o', color=color)
+                                # Raster plot of the data
+                            for st_idx, spike_train in enumerate(spike_trains):
+                                new_st_idx = np.where(cell_new_order == st_idx)[0][0]
+                                ax.plot(spike_train, [new_st_idx] * len(spike_train), '|', color="white")
+
+                            y_ticks_labels_color = "white"
+                            x_ticks_labels_color = "white"
+                            ax.yaxis.label.set_color(y_ticks_labels_color)
+                            ax.xaxis.label.set_color(x_ticks_labels_color)
+                            ax.tick_params(axis='y', colors=y_ticks_labels_color)
+                            ax.tick_params(axis='x', colors=x_ticks_labels_color)
+                            ax.set_yticks(np.arange(n_cells))
+                            ax.set_yticklabels(y_labels[:])
+                            plt.ylim([-1, n_cells])
+                            plt.xlabel('time (ms)')
+                            plt.ylabel('neurons ids')
+                            plt.title(f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
+                                                 f"{self.patient_id}_cluster_{pattern_index}")
+                            show_fig = False
+                            if show_fig:
+                                plt.show()
+                            file_name = f"cad_elephant_in_{side}_raster_plot_" \
+                                        f"stage_{sleep_stage}_index_{s_index}" \
+                                        f"_{units_str}_{self.patient_id}" \
+                                        f"bin{binsize}_maxlag_{maxlag}_pattern_{pattern_index}" \
+                                        f"_{len(patterns['neurons'])}_cells"
+
+                            if isinstance(save_formats, str):
+                                save_formats = [save_formats]
+
+                            for save_format in save_formats:
+                                fig.savefig(f'{path_results}/{file_name}.{save_format}',
+                                            format=f"{save_format}",
+                                            facecolor=fig.get_facecolor())
+
+                            plt.close()
+                        if test_fake_data:
+                            raise Exception("first try")
+
     def build_raster_for_each_stage_sleep(self, decrease_factor=4,
-                                          with_ordering=True,
-                                          keeping_only_SU=False, with_concatenation=False):
+                                          with_ordering=True, sliding_window_ms=250,
+                                          keeping_only_SU=False, with_concatenation=False,
+                                          all_sleep_stages_in_order=False):
+        """
+
+        :param decrease_factor:
+        :param with_ordering:
+        :param sliding_window_ms:
+        :param keeping_only_SU:
+        :param with_concatenation:
+        :param all_sleep_stages_in_order: we plot the one hour recording in the same plot
+        :return:
+        """
         if not with_concatenation:
             units_str = "SU_and_MU"
             if keeping_only_SU:
@@ -499,7 +811,7 @@ class BonnPatient:
                                                                       title=f"index_{s_index}_ss_left_and_right_{units_str}",
                                                                       spike_trains_format=True,
                                                                       spike_nums_format=False,
-                                                                      keeping_only_SU=keeping_only_SU
+                                                                      keeping_only_SU=keeping_only_SU,
                                                                       )
                     else:
 
@@ -515,7 +827,7 @@ class BonnPatient:
                     spike_struct.decrease_resolution(n=decrease_factor)
 
                     # putting sliding window to 250 ms
-                    sliding_window_duration = spike_struct.get_nb_times_by_ms(250,
+                    sliding_window_duration = spike_struct.get_nb_times_by_ms(sliding_window_ms,
                                                                               as_int=True)
 
                     activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
@@ -572,27 +884,57 @@ class BonnPatient:
             return
 
         # concatenating all commomn sleep stage
-        for sleep_stage in ["1", "2", "3", "R", "W"]:
-            for side in ["Left", "Right", "Left-Right"]:
+        if all_sleep_stages_in_order:
+            for side in ["Left-Right", "Left", "Right"]:
                 if side == "Left-Right":
-                    spike_nums_struct = self.construct_spike_structure(sleep_stage_selection=[sleep_stage],
-                                                                       channels_starting_by=["R"])
+                    spike_nums_struct = self.construct_spike_structure(channels_starting_by=["R"],
+                                                                       spike_nums_format=False)
                 else:
-                    spike_nums_struct = self.construct_spike_structure(sleep_stage_selection=[sleep_stage],
-                                                                       channels_starting_by=[side[0]])
+                    spike_nums_struct = self.construct_spike_structure(channels_starting_by=[side[0]],
+                                                                       spike_nums_format=False)
 
-            plot_spikes_raster(spike_nums=spike_nums_struct.spike_nums, param=self.param,
-                               title=f"Stage {sleep_stage} {side} channel {self.patient_id}",
-                               file_name=f"{side}_raster_plot_stage_{sleep_stage}_{self.patient_id}",
+            plot_spikes_raster(spike_nums=spike_nums_struct.spike_trains, param=self.param,
+                               spike_train_format=True,
+                               title=f"All stages {side} channel {self.patient_id}",
+                               file_name=f"{side}_raster_plot_stage_all_stages_{self.patient_id}",
                                y_ticks_labels=spike_nums_struct.labels,
                                y_ticks_labels_size=4,
                                save_raster=True,
                                show_raster=False,
-                               sliding_window_duration=512,
+                               sliding_window_duration=sliding_window_ms,
                                show_sum_spikes_as_percentage=True,
+                               without_activity_sum=True,
                                plot_with_amplitude=False,
                                activity_threshold=None,
+                               spike_shape="|",
+                               spike_shape_size=1,
                                save_formats="pdf")
+        else:
+            for sleep_stage in ["1", "2", "3", "R", "W"]:
+                for side in ["Left", "Right", "Left-Right"]:
+                    if side == "Left-Right":
+                        spike_nums_struct = self.construct_spike_structure(sleep_stage_selection=[sleep_stage],
+                                                                           channels_starting_by=["R"],
+                                                                           spike_nums_format=False)
+                    else:
+                        spike_nums_struct = self.construct_spike_structure(sleep_stage_selection=[sleep_stage],
+                                                                           channels_starting_by=[side[0]],
+                                                                           spike_nums_format=False)
+
+                plot_spikes_raster(spike_nums=spike_nums_struct.spike_trains, param=self.param,
+                               spike_train_format=True,
+                               without_activity_sum=True,
+                                   title=f"Stage {sleep_stage} {side} channel {self.patient_id}",
+                                   file_name=f"{side}_raster_plot_stage_{sleep_stage}_{self.patient_id}",
+                                   y_ticks_labels=spike_nums_struct.labels,
+                                   y_ticks_labels_size=4,
+                                   save_raster=True,
+                                   show_raster=False,
+                                   sliding_window_duration=512,
+                                   show_sum_spikes_as_percentage=True,
+                                   plot_with_amplitude=False,
+                                   activity_threshold=None,
+                                   save_formats="pdf")
             # if with_ordering:
             # list_seq_dict, best_seq = order_spike_nums_by_seq(spike_nums_struct.spike_nums, self.param,
             #                                                   with_printing=True)
@@ -677,6 +1019,45 @@ class BonnPatient:
     def get_indices_of_sleep_stage(self, sleep_stage_name):
         return [i for i, ss in enumerate(self.sleep_stages) if ss.sleep_stage == sleep_stage_name]
 
+    def descriptive_stats(self):
+        """
+        Print some descriptive stats about a patient
+        :return:
+        """
+
+        print(f"descriptive_stats for {self.patient_id}")
+
+        for channels_starting_by in [None, "L", "R"]:
+            n_su = 0
+            n_mu = 0
+            micro_wire_to_keep = []
+            if (channels_starting_by is None):
+                micro_wire_to_keep = self.available_micro_wires
+            else:
+                indices, channels = self.select_channels_starting_by(channels_starting_by)
+                micro_wire_to_keep.extend(indices)
+                # remove redondant microwire and sort them
+                micro_wire_to_keep = np.unique(micro_wire_to_keep)
+                # then we check if all the micro_wire data are available
+                to_del = np.setdiff1d(micro_wire_to_keep, self.available_micro_wires)
+                if len(to_del) > 0:
+                    for d in to_del:
+                        micro_wire_to_keep = micro_wire_to_keep[micro_wire_to_keep != d]
+
+            for mw_index, micro_wire in enumerate(micro_wire_to_keep):
+                cluster_infos = self.cluster_info[micro_wire][0]
+                for unit_cluster, spikes_time in self.spikes_time_by_microwire[micro_wire].items():
+                    cluster = cluster_infos[unit_cluster]
+                    if (cluster < 1) or (cluster > 2):
+                        continue
+                    if cluster == 1:
+                        # == MU
+                        n_mu += 1
+                    else:
+                        n_su += 1
+
+            print(f"For side {channels_starting_by}: n_su {n_su}, n_mu {n_mu}")
+
     def construct_spike_structure(self, spike_trains_format=True, spike_nums_format=True,
                                   sleep_stage_indices=None,
                                   sleep_stage_selection=None, channels_starting_by=None,
@@ -692,6 +1073,7 @@ class BonnPatient:
         :param channels_to_study: full name without numbers
         :return:
         """
+        # print(f"construct_spike_structure start for {self.patient_id}")
         # don't put non-assigned clusters
         only_SU_and_MU = True
         # toto
@@ -721,8 +1103,8 @@ class BonnPatient:
                     micro_wire_to_keep = micro_wire_to_keep[micro_wire_to_keep != d]
         # print(f"micro_wire_to_keep {micro_wire_to_keep}")
         channels_to_keep = [self.channel_info_by_microwire[micro_wire] for micro_wire in micro_wire_to_keep]
-        if (sleep_stage_indices is None) and (sleep_stage_selection is None):
-            return
+        # if (sleep_stage_indices is None) and (sleep_stage_selection is None):
+        #     return
 
         sleep_stages_to_keep = []
         if sleep_stage_indices is not None:
@@ -733,7 +1115,8 @@ class BonnPatient:
             sleep_stages_to_keep.extend(self.selection_sleep_stage_by_stage(sleep_stage_selection))
 
         if len(sleep_stages_to_keep) == 0:
-            return None
+            # then we put all stages in the order they were recorded
+            sleep_stages_to_keep = self.sleep_stages
         # for ss in sleep_stages_to_keep:
         #     print(ss)
 
@@ -851,6 +1234,7 @@ class BonnPatient:
                         else:
                             spike_trains[unit_index] = np.concatenate((spike_trains[unit_index], time_stamps))
                         # print(f"{unit_index}: len(time_stamps) {len(time_stamps)}")
+
             if spike_nums_format:
                 len_for_ss = int(max_time - min_time)
                 # print(f"len_for_ss {len_for_ss}")
@@ -862,7 +1246,6 @@ class BonnPatient:
                         new_micro_wires_spikes_time_stamps[micro_wire][units_cluster_index] = time_stamps - min_time
                     # print(f"micro_wire {micro_wire}, time_stamps-min_time {time_stamps-min_time}")
                 micro_wires_spikes_time_stamps = new_micro_wires_spikes_time_stamps
-
 
                 print(f"nb_units_spike_nums {nb_units_spike_nums}, spike_nums.shape[1] {spike_nums.shape[1]}, "
                       f"len_for_ss {len_for_ss}")
@@ -922,6 +1305,7 @@ class BonnPatient:
                                       microwire_labels=micro_wire_labels,
                                       cluster_labels=cluster_labels,
                                       title=title)
+        # print(f"End of construct_spike_structure for {self.patient_id}")
         return spike_struct  # spike_nums, micro_wire_to_keep, channels_to_keep, labels
 
 
@@ -1022,7 +1406,7 @@ def main():
 
     time_str = datetime.now().strftime("%Y_%m_%d.%H-%M-%S")
     path_results = path_results_raw + f"{time_str}"
-    os.mkdir(path_results)
+    # os.mkdir(path_results)
 
     # ------------------------------ param section ------------------------------
     # param will be set later when the spike_nums will have been constructed
@@ -1035,12 +1419,15 @@ def main():
     # ------------------------------ param section ------------------------------
     # --------------------------------------------------------------------------------
 
-    patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
-    patient_ids = ["034fn1"]
-    patient_ids = ["052fn2"]
-    patient_ids = ["035fn2"] # memory issue
+    # patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
+    patient_ids = ["034fn1", "035fn2"]
+    # patient_ids = ["046fn2", "052fn2"]
+    # patient_ids = ["034fn1"]
+    # patient_ids = ["052fn2"]
+    # patient_ids = ["046fn2"]
+    # patient_ids = ["035fn2"] # memory issue
 
-    decrease_factor = 4
+    decrease_factor = 4  # used to be 4
 
     sliding_window_duration_in_ms = 100  # 250
     keeping_only_SU = False
@@ -1052,6 +1439,10 @@ def main():
 
     debug_mode = False
 
+    just_do_descriptive_stats = False
+
+    just_do_cad_elephant = True
+
     # ##########################################################################################
     # #################################### CLUSTERING ###########################################
     # ##########################################################################################
@@ -1060,7 +1451,7 @@ def main():
     do_clustering = True
 
     # kmean clustering
-    range_n_clusters_k_mean = np.arange(3, 11)
+    range_n_clusters_k_mean = np.arange(3, 6)
     n_surrogate_k_mean = 20
     keep_only_the_best_kmean_cluster = False
     # shuffling is necessary to select the significant clusters
@@ -1088,6 +1479,19 @@ def main():
         patient = BonnPatient(data_path=data_path, patient_id=patient_id, param=param)
         # patient.print_sleep_stages_info()
         # patient.print_channel_list()
+
+        if just_do_descriptive_stats:
+            patient.descriptive_stats()
+            continue
+
+        if just_do_cad_elephant:
+            patient.elephant_cad(path_results=path_results_raw,
+                                 sliding_window_ms=2,
+                                 time_str=time_str,
+                                 keeping_only_SU=True, with_concatenation=False,
+                                 all_sleep_stages_in_order=False)
+            continue
+
         do_test = False
 
         if do_test:
@@ -1107,14 +1511,20 @@ def main():
         #                              channels_without_number=["RAH"])
 
         # patient.print_sleep_stages_info(selected_indices=[2])
-        build_raster_for_each_stage = False
+        build_raster_for_each_stage = True
         if build_raster_for_each_stage:
-            patient.build_raster_for_each_stage_sleep(with_ordering=False, with_concatenation=False,
+            # patient.build_raster_for_each_stage_sleep(with_ordering=False, with_concatenation=False,
+            #                                           decrease_factor=4,
+            #                                           keeping_only_SU=True)
+            # patient.build_raster_for_each_stage_sleep(with_ordering=False, with_concatenation=False,
+            #                                           decrease_factor=4,
+            #                                           keeping_only_SU=False)
+            # patient.build_raster_for_each_stage_sleep(with_ordering=False, with_concatenation=True,
+            #                                           decrease_factor=4,
+            #                                           keeping_only_SU=False)
+            patient.build_raster_for_each_stage_sleep(with_ordering=False, with_concatenation=True,
                                                       decrease_factor=4,
-                                                      keeping_only_SU=True)
-            patient.build_raster_for_each_stage_sleep(with_ordering=False, with_concatenation=False,
-                                                      decrease_factor=4,
-                                                      keeping_only_SU=False)
+                                                      keeping_only_SU=False, all_sleep_stages_in_order=True)
             continue
 
         # spike_nums_struct = patient.construct_spike_structure(sleep_stage_selection=['2'],
@@ -1307,7 +1717,8 @@ def main():
                                                                    param=param,
                                                                    keep_only_the_best=keep_only_the_best_kmean_cluster,
                                                                    sliding_window_duration=sliding_window_duration,
-                                                                   SCE_times=SCE_times, sce_times_numbers=sce_times_numbers,
+                                                                   SCE_times=SCE_times,
+                                                                   sce_times_numbers=sce_times_numbers,
                                                                    perc_threshold=perc_threshold,
                                                                    n_surrogate_activity_threshold=
                                                                    n_surrogate_activity_threshold,
@@ -1586,4 +1997,5 @@ def sort_it_and_plot_it(spike_struct, patient, param, channels_selection,
     return best_seq, seq_dict
 
 
-main()
+if __name__ == "__main__":
+    main()
