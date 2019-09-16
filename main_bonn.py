@@ -367,7 +367,7 @@ class BonnPatient:
         # contains whether an empty list if no cluster, or a list containing a list containing the type of cluster
         # 1 = MU  2 = SU -1 = Artif.
         # 0 = Unassigned (is ignored)
-        self.cluster_info = cluster_info_file["cluster_info"][0, :]
+        self.cluster_info = cluster_info_file['cluster_info'][0, :]
         # adding cluster == 0 in index so it can match index in cluster_class
         for i, cluster in enumerate(self.cluster_info):
             if len(cluster) == 0:
@@ -416,6 +416,7 @@ class BonnPatient:
                 microwire_number = int(file_in_dir[13:-4]) - 1
                 self.available_micro_wires.append(microwire_number)
                 data_file = hdf5storage.loadmat(data_path + patient_id + "/" + file_in_dir)
+                # print(f"data_file {data_file}")
                 self.spikes_by_microwire[microwire_number] = data_file['spikes']
                 cluster_class = data_file['cluster_class']
                 # .astype(int)
@@ -491,299 +492,373 @@ class BonnPatient:
             print(f"micro {i} channel: {channel}")
 
     def elephant_cad(self, path_results, time_str, sliding_window_ms,
-                     keeping_only_SU=False, with_concatenation=False,
+                     alpha_p_value,
+                     do_filter_spike_trains, n_cells_min_in_ass_to_plot,with_concatenation=False,
                      all_sleep_stages_in_order=False, save_formats="pdf"):
+        """
+
+        Args:
+            path_results:
+            time_str:
+            sliding_window_ms:
+            do_filter_spike_trains: if True, keeps only cells that don't fire too much
+            n_cells_min_in_ass_to_plot: min number of cell in a cell assembly to print the cell assembly
+            keeping_only_SU:
+            with_concatenation:
+            all_sleep_stages_in_order:
+            save_formats:
+
+        Returns:
+
+        """
         # must be >= 2
         maxlag = 2
-        alpha = 0.05 # 0.05
+        alpha = alpha_p_value # 0.05
         test_fake_data=False
 
         new_dir = f"{self.patient_id}_maxlag_{maxlag}_bin_{sliding_window_ms}_{time_str}"
         path_results = os.path.join(path_results, new_dir)
         os.mkdir(path_results)
-
-        if not with_concatenation:
-            for keeping_only_SU in [True, False]:
-                units_str = "SU_and_MU"
-                if keeping_only_SU:
-                    units_str = "only_SU"
-                # for each sleep stage, we print all units, the right hemisphere one and the left ones
-                for s_index in np.arange(self.nb_sleep_stages):
-                    for side in ["Left", "Right", "Left-Right"]:
-                        if side == "Left-Right":
-                            spike_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
-                                                                          title=f"index_{s_index}_ss_left_and_right_{units_str}",
-                                                                          spike_trains_format=True,
-                                                                          spike_nums_format=False,
-                                                                          keeping_only_SU=keeping_only_SU,
-                                                                          )
-                        else:
-
-                            spike_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
-                                                                          channels_starting_by=[side[0]],
-                                                                          title=f"index_{s_index}_ss_{side}_{units_str}",
-                                                                          spike_trains_format=True,
-                                                                          spike_nums_format=False,
-                                                                          keeping_only_SU=keeping_only_SU
-                                                                          )
-                        sleep_stage = self.sleep_stages[s_index].sleep_stage
-
-                        # first we create a spike_trains in the neo format
-                        spike_trains = []
-                        n_cells = len(spike_struct.spike_trains)
-                        t_start = None
-                        t_stop = None
-                        for cell in np.arange(n_cells):
-                            spike_train = spike_struct.spike_trains[cell]
-                            # convert frames in ms
-                            spike_train = spike_train / 1000
-                            spike_trains.append(spike_train)
-                            if t_start is None:
-                                t_start = spike_train[0]
+        with open(os.path.join(path_results, new_dir + "_log.txt"), "w", encoding='UTF-8') as file:
+            if not with_concatenation:
+                for keeping_only_SU in [True, False]:
+                    units_str = "SU_and_MU"
+                    if keeping_only_SU:
+                        units_str = "only_SU"
+                    # for each sleep stage, we print all units, the right hemisphere one and the left ones
+                    for s_index in np.arange(self.nb_sleep_stages):
+                        # TODO: concatenate all same stages
+                        # TODO: concatenate several stages sleep next to each other
+                        for side in ["Left", "Right", "Left-Right"]:
+                            if side == "Left-Right":
+                                spike_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
+                                                                              title=f"index_{s_index}_ss_left_and_right_{units_str}",
+                                                                              spike_trains_format=True,
+                                                                              spike_nums_format=False,
+                                                                              keeping_only_SU=keeping_only_SU,
+                                                                              )
                             else:
-                                t_start = min(t_start, spike_train[0])
-                            if t_stop is None:
-                                t_stop = spike_train[-1]
-                            else:
-                                t_stop = max(t_stop, spike_train[-1])
-                        duration_sec = (t_stop - t_start) / 1000
-                        title = f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
-                        f"{self.patient_id}, duration {np.round(duration_sec, 3)}",
-                        print(f"***********  {title}  ***********")
 
-                        if test_fake_data:
-                            n_cells = 20
+                                spike_struct = self.construct_spike_structure(sleep_stage_indices=[s_index],
+                                                                              channels_starting_by=[side[0]],
+                                                                              title=f"index_{s_index}_ss_{side}_{units_str}",
+                                                                              spike_trains_format=True,
+                                                                              spike_nums_format=False,
+                                                                              keeping_only_SU=keeping_only_SU
+                                                                              )
+                            sleep_stage = self.sleep_stages[s_index].sleep_stage
+
+                            # first we create a spike_trains in the neo format
                             spike_trains = []
-                            t_start = 0.
-                            t_stop = 60*5*1000
-
-                            for cell_index in np.arange(3):
-                                n_spikes = 50
-                                spike_train = np.zeros(n_spikes)
-
-                                for spike in range(n_spikes):
-                                    spike_train[spike] = (spike+1)*5500 + np.random.randint(1, 80)
-
+                            t_start = None
+                            t_stop = None
+                            for cell in np.arange(len(spike_struct.spike_trains)):
+                                spike_train = spike_struct.spike_trains[cell]
+                                # convert frames in ms
+                                spike_train = spike_train / 1000
                                 spike_trains.append(spike_train)
+                                if t_start is None:
+                                    t_start = spike_train[0]
+                                else:
+                                    t_start = min(t_start, spike_train[0])
+                                if t_stop is None:
+                                    t_stop = spike_train[-1]
+                                else:
+                                    t_stop = max(t_stop, spike_train[-1])
 
-                            for cell_index in np.arange(3, 20):
-                                n_spikes = 100
-                                spike_train = np.zeros(n_spikes)
+                            duration_sec = (t_stop - t_start) / 1000
+                            cell_labels = spike_struct.labels
+                            # filtering spike_trains
+                            if do_filter_spike_trains:
+                                filtered_spike_trains = []
+                                filtered_cell_labels = []
+                                for cell in np.arange(len(spike_trains)):
+                                    spike_train = spike_trains[cell]
+                                    n_spike_normalized = len(spike_train) / duration_sec
+                                    # print(f"n spikes: {n_spike_normalized}")
+                                    if n_spike_normalized <= 5:
+                                        filtered_spike_trains.append(spike_train)
+                                        filtered_cell_labels.append(cell_labels[cell])
+                                spike_trains = filtered_spike_trains
+                                cell_labels = filtered_cell_labels
 
-                                for spike in range(n_spikes):
-                                    spike_train[spike] = (spike+1)*2900 + + np.random.randint(1, 80)
+                            n_cells = len(spike_trains)
+                            title = f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
+                            f"{self.patient_id}, duration {np.round(duration_sec, 3)}",
+                            print(f"***********  {title}  ***********")
+                            file.write(f"***********  {title}  ***********" + '\n')
 
-                                spike_trains.append(spike_train)
+                            if test_fake_data:
+                                n_cells = 20
+                                spike_trains = []
+                                t_start = 0.
+                                t_stop = 60*5*1000
+
+                                for cell_index in np.arange(3):
+                                    n_spikes = 50
+                                    spike_train = np.zeros(n_spikes)
+
+                                    for spike in range(n_spikes):
+                                        spike_train[spike] = (spike+1)*5500 + np.random.randint(1, 80)
+
+                                    spike_trains.append(spike_train)
+
+                                for cell_index in np.arange(3, 20):
+                                    n_spikes = 100
+                                    spike_train = np.zeros(n_spikes)
+
+                                    for spike in range(n_spikes):
+                                        spike_train[spike] = (spike+1)*2900 + + np.random.randint(1, 80)
+
+                                    spike_trains.append(spike_train)
+
+                            neo_spike_trains = []
+                            for cell in np.arange(n_cells):
+                                spike_train = spike_trains[cell]
+                                # print(f"n_spikes: {cell_labels[cell]}: {len(spike_train)}")
+                                neo_spike_train = neo.SpikeTrain(times=spike_train, units='ms',
+                                                                 t_start=t_start,
+                                                                 t_stop=t_stop)
+                                neo_spike_trains.append(neo_spike_train)
+
+                            binsize = sliding_window_ms * pq.ms
+                            # print(f'binsize {binsize}')
+                            spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=binsize)
+
+                            """
+                               A list of lists for each spike train (i.e., rows of the binned matrix), 
+                               that in turn contains for each spike the index into the binned matrix where this spike enters.
+                            """
+                            spike_indices_in_bins = spike_trains_binned.spike_indices
+                            patterns_cad = cell_assembly_detection(data=spike_trains_binned, maxlag=maxlag,
+                                                                   same_config_cut=False,
+                                                                   alpha=alpha,
+                                                                   min_occ=1, significance_pruning=True,
+                                                                   verbose=True)
+                            # print(f"patterns_cad {patterns_cad}")
+                            # patterns_cad[0]['times'] does correspond to the number of rep in 'signature' for the
+                            # the max number of cells in this given assembly
+                            # if len(patterns_cad) > 0:
+                            #     print(f"len(patterns_cad[0]['times']) {len(patterns_cad[0]['times'])}")
 
 
-                        neo_spike_trains = []
-                        for cell in np.arange(n_cells):
-                            spike_train = spike_trains[cell]
-                            # print(f"n_spikes: {spike_struct.labels[cell]}: {len(spike_train)}")
-                            neo_spike_train = neo.SpikeTrain(times=spike_train, units='ms',
-                                                             t_start=t_start,
-                                                             t_stop=t_stop)
-                            neo_spike_trains.append(neo_spike_train)
+                            # print(f"spike_indices_in_bins {spike_indices_in_bins}")
+                            print(f"n assemblies : {len(patterns_cad)}")
+                            file.write(f"n assemblies : {len(patterns_cad)}" + '\n')
 
-                        binsize = sliding_window_ms * pq.ms
-                        # print(f'binsize {binsize}')
-                        spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=binsize)
+                            biggest_cell_ass = 0
+                            for ass_index, patterns in enumerate(patterns_cad):
+                                print(f"########## assembly {ass_index} ##########")
+                                file.write(f"########## assembly {ass_index} ##########" + '\n')
 
-                        """
-                           A list of lists for each spike train (i.e., rows of the binned matrix), 
-                           that in turn contains for each spike the index into the binned matrix where this spike enters.
-                        """
-                        spike_indices_in_bins = spike_trains_binned.spike_indices
-                        patterns_cad = cell_assembly_detection(data=spike_trains_binned, maxlag=maxlag,
-                                                               same_config_cut=False,
-                                                               alpha=alpha,
-                                                               min_occ=1, significance_pruning=True,
-                                                               verbose=True)
-                        # print(f"patterns_cad {patterns_cad}")
+                                labels_assembly = []
+                                for order_index, cell_index in enumerate(patterns['neurons']):
+                                    labels_assembly.append(cell_labels[cell_index])
+                                biggest_cell_ass = max(biggest_cell_ass, len(patterns['neurons']))
 
+                                print(f"{len(patterns['neurons'])} neurons: {labels_assembly}")
+                                file.write(f"{len(patterns['neurons'])} neurons: {labels_assembly}" + '\n')
+                                print(f"lags {patterns['lags']}")
+                                file.write(f"lags {patterns['lags']}" + '\n')
 
-                        # print(f"spike_indices_in_bins {spike_indices_in_bins}")
-                        print(f"n assemblies : {len(patterns_cad)}")
-                        biggest_cell_ass = 0
-                        for ass_index, patterns in enumerate(patterns_cad):
-                            print(f"########## assembly {ass_index} ##########")
-                            labels_assembly = []
-                            for order_index, cell_index in enumerate(patterns['neurons']):
-                                labels_assembly.append(spike_struct.labels[cell_index])
-                            biggest_cell_ass = max(biggest_cell_ass, len(patterns['neurons']))
-                            print(f"{len(patterns['neurons'])} neurons: {labels_assembly}")
-                            print(f"lags {patterns['lags']}")
-                            for order_index, cell_index in enumerate(patterns['neurons']):
-                                rep_ass = patterns['signature'][order_index][1]
-                                print(f"{spike_struct.labels[cell_index]}: {rep_ass} rep in assembly "
-                                      f"vs {len(spike_trains[cell_index])} spikes, "
-                                      f"n bins {len(np.unique(spike_indices_in_bins[cell_index]))}")
-                                # print(f", "
-                                #       f"n spikes: {len(spike_indices_in_bins[cell_index])}")
-                        print(f"///// N cells max in a cell assembly: {biggest_cell_ass}")
-                        print("")
+                                for order_index, cell_index in enumerate(patterns['neurons']):
+                                    rep_ass = patterns['signature'][order_index][1]
 
-                        """
-                        patterns_cad
-                        contains the assemblies detected for the binsize chosen each assembly is a dictionary with attributes: 
-                        ‘neurons’ : vector of units taking part to the assembly
-                
-                        (unit order correspond to the agglomeration order)
-                
-                        ‘lag’ : vector of time lags lag[z] is the activation delay between
-                        neurons[1] and neurons[z+1]
-                
-                        ‘pvalue’ : vector of pvalues. pvalue[z] is the p-value of the
-                        statistical test between performed adding neurons[z+1] to the neurons[1:z]
-                
-                        ‘times’ : assembly activation time. It reports how many times the
-                        complete assembly activates in that bin. time always refers to the activation of the first listed assembly element 
-                        (neurons[1]), that doesn’t necessarily corresponds to the first unit firing. 
-                        The format is identified by the variable bool_times_format.
-                
-                        ‘signature’ : array of two entries (z,c). The first is the number of
-                        neurons participating in the assembly (size), the second is number of assembly occurrences.
-                        """
+                                    print(f"{cell_labels[cell_index]}: {rep_ass} rep in assembly "
+                                          f"vs {len(spike_trains[cell_index])} spikes, "
+                                          f"n bins {len(np.unique(spike_indices_in_bins[cell_index]))}")
+                                    file.write(f"{cell_labels[cell_index]}: {rep_ass} rep in assembly "
+                                          f"vs {len(spike_trains[cell_index])} spikes, "
+                                          f"n bins {len(np.unique(spike_indices_in_bins[cell_index]))}" + '\n')
+                                    # print(f", "
+                                    #       f"n spikes: {len(spike_indices_in_bins[cell_index])}")
 
-                        # qualitative 12 colors : http://colorbrewer2.org/?type=qualitative&scheme=Paired&n=12
-                        colors = ['#a6cee3', '#1f78b4', '#b2df8a', '#33a02c', '#fb9a99', '#e31a1c', '#fdbf6f',
-                                  '#ff7f00', '#cab2d6', '#6a3d9a', '#ffff99', '#b15928']
-                        cells_to_highlight_colors = []
-                        cells_to_highlight = []
-                        cell_new_order = []
-                        all_cells = np.arange(n_cells)
-                        cell_index_so_far = 0
-                        for ca_index, cell_assembly in enumerate(patterns_cad):
-                            n_cells_in_ca = 0
-                            for neu in cell_assembly['neurons']:
-                                # a cell can be in more than one assembly
-                                if neu not in cell_new_order:
-                                    cell_new_order.append(neu)
-                                    n_cells_in_ca += 1
-                            cells_to_highlight.extend(np.arange(cell_index_so_far, cell_index_so_far + n_cells_in_ca))
-                            cell_index_so_far += n_cells_in_ca
-                            cells_to_highlight_colors.extend([colors[ca_index % len(colors)]] * n_cells_in_ca)
+                            print(f"///// N cells max in a cell assembly: {biggest_cell_ass}")
+                            file.write(f"///// N cells max in a cell assembly: {biggest_cell_ass}" + '\n')
+                            print("")
+                            file.write('\n')
 
-                        cell_new_order.extend(list(np.setdiff1d(all_cells, cell_new_order)))
-                        cell_new_order = np.array(cell_new_order)
-                        ordered_spike_trains = []
-                        if test_fake_data:
-                            y_labels = np.arange(n_cells)
-                            cell_new_order = np.arange(n_cells)
-                        else:
-                            y_labels = []
-                            for cell_index in cell_new_order:
-                                ordered_spike_trains.append(spike_trains[cell_index])
-                                y_labels.append(spike_struct.labels[cell_index])
-                        # plot_spikes_raster(spike_nums=ordered_spike_trains,
-                        #                    path_results=path_results,
-                        #                    spike_train_format=True,
-                        #                    title=f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
-                        #                          f"{self.patient_id}",
-                        #                    file_name=f"cad_elephant_{side}_raster_plot_stage_{sleep_stage}_index_{s_index}"
-                        #                              f"_{units_str}_{self.patient_id}",
-                        #                    y_ticks_labels=y_labels,
-                        #                    y_ticks_labels_size=2,
-                        #                    dpi=200,
-                        #                    save_raster=True,
-                        #                    show_raster=False,
-                        #                    plot_with_amplitude=False,
-                        #                    without_activity_sum=True,
-                        #                    show_sum_spikes_as_percentage=False,
-                        #                    cells_to_highlight=cells_to_highlight,
-                        #                    cells_to_highlight_colors=cells_to_highlight_colors,
-                        #                    span_area_only_on_raster=False,
-                        #                    spike_shape=".",
-                        #                    spike_shape_size=0.5,
-                        #                    # spike_shape='o',
-                        #                    # spike_shape_size=0.05,
-                        #                    save_formats=["pdf", "png"])
+                            """
+                            patterns_cad
+                            contains the assemblies detected for the binsize chosen each assembly is a dictionary with attributes: 
+                            ‘neurons’ : vector of units taking part to the assembly
+                    
+                            (unit order correspond to the agglomeration order)
+                    
+                            ‘lag’ : vector of time lags lag[z] is the activation delay between
+                            neurons[1] and neurons[z+1]
+                    
+                            ‘pvalue’ : vector of pvalues. pvalue[z] is the p-value of the
+                            statistical test between performed adding neurons[z+1] to the neurons[1:z]
+                    
+                            ‘times’ : assembly activation time. It reports how many times the
+                            complete assembly activates in that bin. time always refers to the activation of the first listed assembly element 
+                            (neurons[1]), that doesn’t necessarily corresponds to the first unit firing. 
+                            The format is identified by the variable bool_times_format.
+                    
+                            ‘signature’ : array of two entries (z,c). The first is the number of
+                            neurons participating in the assembly (size), the second is number of assembly occurrences.
+                            """
 
-                        if test_fake_data:
-                            background_color = "black"
-                            fig, ax = plt.subplots(nrows=1, ncols=1,
-                                                   figsize=(90, 30))
-                            fig.patch.set_facecolor(background_color)
-                            ax.set_facecolor(background_color)
-                            for st_idx, spike_train in enumerate(spike_trains):
-                                new_st_idx = np.where(cell_new_order == st_idx)[0][0]
-                                ax.plot(spike_train, [new_st_idx] * len(spike_train), '|', color="white")
+                            # -------------- figuring out the order in the cell assembly ------------- #
+                            # for each repetition of the cell assembly, we keep the delay between cells
+                            for pattern_index, patterns in enumerate(patterns_cad):
+                                activation_orders = []
+                                activation_diffs = []
+                                activation_times = t_start + (patterns['times'] * int(binsize))
+                                for activation_time in activation_times:
+                                    activation_spike_times = []
+                                    cells = np.array(patterns['neurons'])
+                                    for cell_loop_index, cell in enumerate(cells):
+                                        spike_train = np.array(spike_trains[cell])
+                                        spike_index = np.searchsorted(spike_train, activation_time)
+                                        activation_spike_times.append(spike_train[spike_index])
+                                    sorted_arg = np.argsort(activation_spike_times)
+                                    labels_ordered = []
+                                    for cell in cells[sorted_arg]:
+                                        labels_ordered.append(cell_labels[cell])
+                                    activation_orders.append(tuple(labels_ordered))
+                                    activation_diff = np.diff(np.array(activation_spike_times)[sorted_arg])
+                                    # allows to know the number of unique element later
+                                    activation_diffs.append(tuple(list(activation_diff)))
+                                act_orders_dict = dict()
+                                for activation_order in activation_orders:
+                                    act_orders_dict[activation_order] = act_orders_dict.get(activation_order, 0) + 1
+                                # act_diffs_dict = dict()
+                                # for activation_diff in activation_diffs:
+                                #     act_diffs_dict[activation_diff] = act_diffs_dict.get(activation_diff, 0) + 1
+                                print(f"pattern_index {pattern_index}")
+                                file.write(f"pattern_index {pattern_index}" + '\n')
+                                print(f"activation_orders count {act_orders_dict}")
+                                file.write(f"activation_orders count {act_orders_dict}" + '\n')
+                                # TODO: save them as numpy array if needed
+                                # print(f"activation_diffs count {act_diffs_dict}")
+                                # print("activation_orders,  activation_diffs")
+                                # file.write("activation_orders,  activation_diffs" + '\n')
+                                # act_str = ""
+                                # for index in range(len(activation_orders)):
+                                #     act_str = act_str + f"{activation_orders}, {activation_diffs} | "
+                                # print(f"{act_str}")
+                                # file.write(f"{act_str}" + '\n')
+                                # print(f"")
+                                # file.write('\n')
 
-                            y_ticks_labels_color = "white"
-                            x_ticks_labels_color = "white"
-                            ax.yaxis.label.set_color(y_ticks_labels_color)
-                            ax.xaxis.label.set_color(x_ticks_labels_color)
-                            ax.tick_params(axis='y', colors=y_ticks_labels_color)
-                            ax.tick_params(axis='x', colors=x_ticks_labels_color)
-                            ax.set_yticks(np.arange(n_cells))
-                            ax.set_yticklabels(y_labels[:])
-                            plt.ylim([-1, n_cells])
-                            plt.xlabel('time (ms)')
-                            plt.ylabel('neurons ids')
-                            plt.title(f"Fake")
-                            show_fig = True
-                            if show_fig:
-                                plt.show()
-
-                        for pattern_index, patterns in enumerate(patterns_cad):
-                            if len(patterns['neurons']) < 3:
-                                continue
-
+                            # qualitative 12 colors : http://colorbrewer2.org/?type=qualitative&scheme=Paired&n=12
+                            colors = ['#a6cee3', '#1f78b4', '#b2df8a', '#33a02c', '#fb9a99', '#e31a1c', '#fdbf6f',
+                                      '#ff7f00', '#cab2d6', '#6a3d9a', '#ffff99', '#b15928']
+                            cells_to_highlight_colors = []
+                            cells_to_highlight = []
                             cell_new_order = []
                             all_cells = np.arange(n_cells)
-                            cell_new_order.extend(patterns['neurons'])
+                            cell_index_so_far = 0
+                            for ca_index, cell_assembly in enumerate(patterns_cad):
+                                n_cells_in_ca = 0
+                                for neu in cell_assembly['neurons']:
+                                    # a cell can be in more than one assembly
+                                    if neu not in cell_new_order:
+                                        cell_new_order.append(neu)
+                                        n_cells_in_ca += 1
+                                cells_to_highlight.extend(np.arange(cell_index_so_far, cell_index_so_far + n_cells_in_ca))
+                                cell_index_so_far += n_cells_in_ca
+                                cells_to_highlight_colors.extend([colors[ca_index % len(colors)]] * n_cells_in_ca)
+
                             cell_new_order.extend(list(np.setdiff1d(all_cells, cell_new_order)))
                             cell_new_order = np.array(cell_new_order)
+                            ordered_spike_trains = []
+                            if test_fake_data:
+                                y_labels = np.arange(n_cells)
+                                cell_new_order = np.arange(n_cells)
+                            else:
+                                y_labels = []
+                                for cell_index in cell_new_order:
+                                    ordered_spike_trains.append(spike_trains[cell_index])
+                                    y_labels.append(cell_labels[cell_index])
 
-                            background_color = "black"
-                            fig, ax = plt.subplots(nrows=1, ncols=1,
-                                                   figsize=(90, 30))
-                            fig.patch.set_facecolor(background_color)
-                            ax.set_facecolor(background_color)
-                            for neu in patterns['neurons']:
-                                new_neu_index = np.where(cell_new_order == neu)[0][0]
-                                # color = colors[pattern_index % len(colors)]
-                                color = "red"
-                                ax.plot(t_start+(patterns['times'] * int(binsize)),
-                                            [new_neu_index] * len(patterns['times']), 'o', color=color)
-                                # Raster plot of the data
-                            for st_idx, spike_train in enumerate(spike_trains):
-                                new_st_idx = np.where(cell_new_order == st_idx)[0][0]
-                                ax.plot(spike_train, [new_st_idx] * len(spike_train), '|', color="white")
+                            if test_fake_data:
+                                background_color = "black"
+                                fig, ax = plt.subplots(nrows=1, ncols=1,
+                                                       figsize=(90, 30))
+                                fig.patch.set_facecolor(background_color)
+                                ax.set_facecolor(background_color)
+                                for st_idx, spike_train in enumerate(spike_trains):
+                                    new_st_idx = np.where(cell_new_order == st_idx)[0][0]
+                                    ax.plot(spike_train, [new_st_idx] * len(spike_train), '|', color="white")
 
-                            y_ticks_labels_color = "white"
-                            x_ticks_labels_color = "white"
-                            ax.yaxis.label.set_color(y_ticks_labels_color)
-                            ax.xaxis.label.set_color(x_ticks_labels_color)
-                            ax.tick_params(axis='y', colors=y_ticks_labels_color)
-                            ax.tick_params(axis='x', colors=x_ticks_labels_color)
-                            ax.set_yticks(np.arange(n_cells))
-                            ax.set_yticklabels(y_labels[:])
-                            plt.ylim([-1, n_cells])
-                            plt.xlabel('time (ms)')
-                            plt.ylabel('neurons ids')
-                            plt.title(f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
-                                                 f"{self.patient_id}_cluster_{pattern_index}")
-                            show_fig = False
-                            if show_fig:
-                                plt.show()
-                            file_name = f"cad_elephant_in_{side}_raster_plot_" \
-                                        f"stage_{sleep_stage}_index_{s_index}" \
-                                        f"_{units_str}_{self.patient_id}" \
-                                        f"bin{binsize}_maxlag_{maxlag}_pattern_{pattern_index}" \
-                                        f"_{len(patterns['neurons'])}_cells"
+                                y_ticks_labels_color = "white"
+                                x_ticks_labels_color = "white"
+                                ax.yaxis.label.set_color(y_ticks_labels_color)
+                                ax.xaxis.label.set_color(x_ticks_labels_color)
+                                ax.tick_params(axis='y', colors=y_ticks_labels_color)
+                                ax.tick_params(axis='x', colors=x_ticks_labels_color)
+                                ax.set_yticks(np.arange(n_cells))
+                                ax.set_yticklabels(y_labels[:])
+                                plt.ylim([-1, n_cells])
+                                plt.xlabel('time (ms)')
+                                plt.ylabel('neurons ids')
+                                plt.title(f"Fake")
+                                show_fig = True
+                                if show_fig:
+                                    plt.show()
 
-                            if isinstance(save_formats, str):
-                                save_formats = [save_formats]
+                            for pattern_index, patterns in enumerate(patterns_cad):
+                                if len(patterns['neurons']) < n_cells_min_in_ass_to_plot:
+                                    continue
 
-                            for save_format in save_formats:
-                                fig.savefig(f'{path_results}/{file_name}.{save_format}',
-                                            format=f"{save_format}",
-                                            facecolor=fig.get_facecolor())
+                                cell_new_order = []
+                                all_cells = np.arange(n_cells)
+                                cell_new_order.extend(patterns['neurons'])
+                                cell_new_order.extend(list(np.setdiff1d(all_cells, cell_new_order)))
+                                cell_new_order = np.array(cell_new_order)
 
-                            plt.close()
-                        if test_fake_data:
-                            raise Exception("first try")
+                                background_color = "black"
+                                fig, ax = plt.subplots(nrows=1, ncols=1,
+                                                       figsize=(90, 30))
+                                fig.patch.set_facecolor(background_color)
+                                ax.set_facecolor(background_color)
+                                for neu in patterns['neurons']:
+                                    new_neu_index = np.where(cell_new_order == neu)[0][0]
+                                    # color = colors[pattern_index % len(colors)]
+                                    color = "red"
+                                    ax.plot(t_start+(patterns['times'] * int(binsize)),
+                                                [new_neu_index] * len(patterns['times']), 'o', color=color)
+                                    # Raster plot of the data
+                                for st_idx, spike_train in enumerate(spike_trains):
+                                    new_st_idx = np.where(cell_new_order == st_idx)[0][0]
+                                    ax.plot(spike_train, [new_st_idx] * len(spike_train), '|', color="white")
+
+                                y_ticks_labels_color = "white"
+                                x_ticks_labels_color = "white"
+                                ax.yaxis.label.set_color(y_ticks_labels_color)
+                                ax.xaxis.label.set_color(x_ticks_labels_color)
+                                ax.tick_params(axis='y', colors=y_ticks_labels_color)
+                                ax.tick_params(axis='x', colors=x_ticks_labels_color)
+                                ax.set_yticks(np.arange(n_cells))
+                                ax.set_yticklabels(y_labels[:])
+                                plt.ylim([-1, n_cells])
+                                plt.xlabel('time (ms)')
+                                plt.ylabel('neurons ids')
+                                plt.title(f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
+                                          f"{self.patient_id}_cluster_{pattern_index}")
+                                show_fig = False
+                                if show_fig:
+                                    plt.show()
+                                file_name = f"cad_elephant_in_{side}_raster_plot_" \
+                                            f"stage_{sleep_stage}_index_{s_index}" \
+                                            f"_{units_str}_{self.patient_id}" \
+                                            f"bin{binsize}_maxlag_{maxlag}_pattern_{pattern_index}" \
+                                            f"_{len(patterns['neurons'])}_cells"
+
+                                if isinstance(save_formats, str):
+                                    save_formats = [save_formats]
+
+                                for save_format in save_formats:
+                                    fig.savefig(f'{path_results}/{file_name}.{save_format}',
+                                                format=f"{save_format}",
+                                                facecolor=fig.get_facecolor())
+
+                                plt.close()
+                            if test_fake_data:
+                                raise Exception("first try")
 
     def build_raster_for_each_stage_sleep(self, decrease_factor=4,
                                           with_ordering=True, sliding_window_ms=250,
@@ -848,7 +923,7 @@ class BonnPatient:
                                                  f"{self.patient_id}",
                                            file_name=f"{side}_raster_plot_stage_{sleep_stage}_index_{s_index}"
                                                      f"_{units_str}_{self.patient_id}",
-                                           y_ticks_labels=spike_struct.labels,
+                                           y_ticks_labels=cell_labels,
                                            y_ticks_labels_size=4,
                                            save_raster=True,
                                            show_raster=False,
@@ -1044,7 +1119,12 @@ class BonnPatient:
                     for d in to_del:
                         micro_wire_to_keep = micro_wire_to_keep[micro_wire_to_keep != d]
 
-            for mw_index, micro_wire in enumerate(micro_wire_to_keep):
+            mu_by_area_count = SortedDict()
+            su_by_area_count = SortedDict()
+            # A	AH	EC	MH	PH	PHC
+            # print(f"self.channel_info_by_microwire {self.channel_info_by_microwire}")
+            # print(f"self.available_micro_wires {self.available_micro_wires}")
+            for micro_wire in micro_wire_to_keep:
                 cluster_infos = self.cluster_info[micro_wire][0]
                 for unit_cluster, spikes_time in self.spikes_time_by_microwire[micro_wire].items():
                     cluster = cluster_infos[unit_cluster]
@@ -1053,10 +1133,25 @@ class BonnPatient:
                     if cluster == 1:
                         # == MU
                         n_mu += 1
+                        counter_dict = mu_by_area_count
                     else:
                         n_su += 1
+                        counter_dict = su_by_area_count
+                    channel_name = self.channel_info_by_microwire[micro_wire]
+                    # print(f'channel_name {channel_name}')
+                    unique_channels = ["EC", "AH", "MH", "PHC"]
+                    for channel in unique_channels:
+                        if channel in channel_name:
+                            counter_dict[channel] = counter_dict.get(channel, 0) + 1
+                    if ("A" in channel_name) and ("AH" not in channel_name):
+                        counter_dict["A"] = counter_dict.get("A", 0) + 1
+                    if ("PH" in channel_name) and ("PHC" not in channel_name):
+                        counter_dict["PH"] = counter_dict.get("PH", 0) + 1
 
             print(f"For side {channels_starting_by}: n_su {n_su}, n_mu {n_mu}")
+            print(f"mu_by_area_count: {mu_by_area_count}")
+            print(f"su_by_area_count: {su_by_area_count}")
+            print("")
 
     def construct_spike_structure(self, spike_trains_format=True, spike_nums_format=True,
                                   sleep_stage_indices=None,
@@ -1419,8 +1514,8 @@ def main():
     # ------------------------------ param section ------------------------------
     # --------------------------------------------------------------------------------
 
-    # patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
-    patient_ids = ["034fn1", "035fn2"]
+    patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
+    # patient_ids = ["034fn1", "035fn2"]
     # patient_ids = ["046fn2", "052fn2"]
     # patient_ids = ["034fn1"]
     # patient_ids = ["052fn2"]
@@ -1439,7 +1534,7 @@ def main():
 
     debug_mode = False
 
-    just_do_descriptive_stats = False
+    just_do_descriptive_stats = True
 
     just_do_cad_elephant = True
 
@@ -1486,9 +1581,11 @@ def main():
 
         if just_do_cad_elephant:
             patient.elephant_cad(path_results=path_results_raw,
-                                 sliding_window_ms=2,
-                                 time_str=time_str,
-                                 keeping_only_SU=True, with_concatenation=False,
+                                 n_cells_min_in_ass_to_plot=2,
+                                 do_filter_spike_trains=False,
+                                 alpha_p_value=0.05,
+                                 sliding_window_ms=10,
+                                 time_str=time_str, with_concatenation=False,
                                  all_sleep_stages_in_order=False)
             continue
 
