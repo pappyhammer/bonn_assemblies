@@ -30,6 +30,7 @@ from pattern_discovery.seq_solver.markov_way import find_sequences_in_ordered_sp
 import neo
 import quantities as pq
 import elephant.conversion as elephant_conv
+from elephant.spike_train_correlation import corrcoef
 # import elephant.cell_assembly_detection as cad
 from cell_assembly_detection import cell_assembly_detection
 
@@ -511,6 +512,8 @@ class BonnPatient:
         Returns:
 
         """
+
+        # TODO: add a mode to concatenate all SWS stages
         # must be >= 2
         maxlag = 2
         alpha = alpha_p_value # 0.05
@@ -583,10 +586,6 @@ class BonnPatient:
                                 cell_labels = filtered_cell_labels
 
                             n_cells = len(spike_trains)
-                            title = f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels "
-                            f"{self.patient_id}, duration {np.round(duration_sec, 3)}",
-                            print(f"***********  {title}  ***********")
-                            file.write(f"***********  {title}  ***********" + '\n')
 
                             if test_fake_data:
                                 n_cells = 20
@@ -624,12 +623,17 @@ class BonnPatient:
                             binsize = sliding_window_ms * pq.ms
                             # print(f'binsize {binsize}')
                             spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=binsize)
-
+                            # crosscorrelograms of firing times
+                            # (before spike sorting; lags -10 ms to 10 ms, bin size 0.5 ms)
+                            spike_trains_binned_0_5 = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=0.5 * pq.ms)
+                            # Spike-count correlations
+                            corr_coef_matrix = corrcoef(spike_trains_binned)
                             """
                                A list of lists for each spike train (i.e., rows of the binned matrix), 
                                that in turn contains for each spike the index into the binned matrix where this spike enters.
                             """
                             spike_indices_in_bins = spike_trains_binned.spike_indices
+                            n_bins = len(spike_trains_binned.bin_edges)
                             patterns_cad = cell_assembly_detection(data=spike_trains_binned, maxlag=maxlag,
                                                                    same_config_cut=False,
                                                                    alpha=alpha,
@@ -641,6 +645,13 @@ class BonnPatient:
                             # if len(patterns_cad) > 0:
                             #     print(f"len(patterns_cad[0]['times']) {len(patterns_cad[0]['times'])}")
 
+                            title = f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels " \
+                                f"{self.patient_id}, duration {np.round(duration_sec, 3)}, n bins: {n_bins}"
+                            # stat_stage = f"Duration  {np.round(self.sleep_stages[s_index].duration / 1000000, 3)} sec, " \
+                            #     f"n bins: {n_bins}"
+                            print("")
+                            print(f"***********  {title}  ***********")
+                            file.write('\n' + f"***********  {title}  ***********" + '\n')
 
                             # print(f"spike_indices_in_bins {spike_indices_in_bins}")
                             print(f"n assemblies : {len(patterns_cad)}")
@@ -670,6 +681,11 @@ class BonnPatient:
                                     file.write(f"{cell_labels[cell_index]}: {rep_ass} rep in assembly "
                                           f"vs {len(spike_trains[cell_index])} spikes, "
                                           f"n bins {len(np.unique(spike_indices_in_bins[cell_index]))}" + '\n')
+                                    if order_index < len(patterns['neurons']) - 1:
+                                        next_cell_index = patterns['neurons'][order_index+1]
+                                        pearson_corr = corr_coef_matrix[cell_index, next_cell_index]
+                                        print(f"Corr {cell_labels[cell_index]} vs {cell_labels[next_cell_index]}: "
+                                              f"{np.round(pearson_corr, 4)}")
                                     # print(f", "
                                     #       f"n spikes: {len(spike_indices_in_bins[cell_index])}")
 
@@ -712,27 +728,63 @@ class BonnPatient:
                                     for cell_loop_index, cell in enumerate(cells):
                                         spike_train = np.array(spike_trains[cell])
                                         spike_index = np.searchsorted(spike_train, activation_time)
+                                        spike_index = min(len(spike_train)-1, spike_index)
                                         activation_spike_times.append(spike_train[spike_index])
                                     sorted_arg = np.argsort(activation_spike_times)
                                     labels_ordered = []
                                     for cell in cells[sorted_arg]:
                                         labels_ordered.append(cell_labels[cell])
                                     activation_orders.append(tuple(labels_ordered))
+                                    # TODO: display the mean value of diff for each combinaison
                                     activation_diff = np.diff(np.array(activation_spike_times)[sorted_arg])
+                                    # print(f"activation_diff {activation_diff}")
                                     # allows to know the number of unique element later
-                                    activation_diffs.append(tuple(list(activation_diff)))
+                                    activation_diffs.append(list(activation_diff))
+                                # print(f"activation_diffs {activation_diffs}")
                                 act_orders_dict = dict()
-                                for activation_order in activation_orders:
+                                act_diffs_by_order_dict = dict()
+                                for index, activation_order in enumerate(activation_orders):
                                     act_orders_dict[activation_order] = act_orders_dict.get(activation_order, 0) + 1
+                                    if activation_order not in act_diffs_by_order_dict:
+                                        # print(f"activation_diffs[index] {activation_diffs[index]}")
+                                        diffs_list = [[one_diff] for one_diff in activation_diffs[index]]
+                                        # print(f"diffs_list {diffs_list}")
+                                        act_diffs_by_order_dict[activation_order] = diffs_list
+                                    else:
+                                        for index_diff, diffs_list in enumerate(act_diffs_by_order_dict[activation_order]):
+                                            # print(f"diffs_list {diffs_list}")
+                                            diffs_list.append(activation_diffs[index][index_diff])
+                                # act_diffs_dict not useful
                                 # act_diffs_dict = dict()
                                 # for activation_diff in activation_diffs:
                                 #     act_diffs_dict[activation_diff] = act_diffs_dict.get(activation_diff, 0) + 1
-                                print(f"pattern_index {pattern_index}")
-                                file.write(f"pattern_index {pattern_index}" + '\n')
-                                print(f"activation_orders count {act_orders_dict}")
-                                file.write(f"activation_orders count {act_orders_dict}" + '\n')
+                                print(f"pattern_index {pattern_index}, len: {len(act_orders_dict)}")
+                                file.write(f"pattern_index {pattern_index}, len: {len(act_orders_dict)}" + '\n')
+                                # print(f"activation_orders count {act_orders_dict}")
+                                # file.write(f"activation_orders count {act_orders_dict}" + '\n')
+                                counts_arg_sorted = np.argsort(list(act_orders_dict.values()))
+                                act_order_values = list(act_orders_dict.keys())
+                                for act_order_index in counts_arg_sorted[::-1]
+                                    act_order = act_order_values[act_order_index]
+                                    diff_lists = act_diffs_by_order_dict[act_order]
+                                    to_print = f"{act_order}: rep {act_orders_dict[act_order]}, "
+                                    for diff_list in diff_lists:
+                                        mean_diffs = np.mean(diff_list)
+                                        median_diffs = np.median(diff_list)
+                                        std_diffs = np.std(diff_list)
+                                        p25_diffs = np.percentile(diff_list, 25)
+                                        p75_diffs = np.percentile(diff_list, 75)
+                                        to_print = to_print + f"mean: {np.round(mean_diffs, 3)}, " + \
+                                                   f"std: {np.round(std_diffs, 3)}. "
+                                        to_print = to_print + f"median: {np.round(median_diffs, 3)}, " + \
+                                                   f"p25: {np.round(p25_diffs, 3)}, " + \
+                                                   f"p75: {np.round(p75_diffs, 3)}  ### "
+                                    print(f"|| Stats diffs: {to_print}")
+                                    print("")
+                                    file.write(f"|| Stats diffs: {to_print}" + '\n')
                                 # TODO: save them as numpy array if needed
                                 # print(f"activation_diffs count {act_diffs_dict}")
+                                # print(f"activation_diffs  {activation_diffs}")
                                 # print("activation_orders,  activation_diffs")
                                 # file.write("activation_orders,  activation_diffs" + '\n')
                                 # act_str = ""
@@ -1514,10 +1566,10 @@ def main():
     # ------------------------------ param section ------------------------------
     # --------------------------------------------------------------------------------
 
-    patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
+    # patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
     # patient_ids = ["034fn1", "035fn2"]
     # patient_ids = ["046fn2", "052fn2"]
-    # patient_ids = ["034fn1"]
+    patient_ids = ["034fn1"]
     # patient_ids = ["052fn2"]
     # patient_ids = ["046fn2"]
     # patient_ids = ["035fn2"] # memory issue
@@ -1534,9 +1586,17 @@ def main():
 
     debug_mode = False
 
-    just_do_descriptive_stats = True
+    just_do_descriptive_stats = False
 
     just_do_cad_elephant = True
+    kwargs_elephant_cad = {"path_results":path_results_raw,
+                           "n_cells_min_in_ass_to_plot": 2,
+                           "do_filter_spike_trains": False,
+                           "alpha_p_value": 0.05,
+                           "sliding_window_ms": 25,
+                           "time_str":time_str,
+                           "with_concatenation": False,
+                           "all_sleep_stages_in_order": False}
 
     # ##########################################################################################
     # #################################### CLUSTERING ###########################################
@@ -1580,13 +1640,7 @@ def main():
             continue
 
         if just_do_cad_elephant:
-            patient.elephant_cad(path_results=path_results_raw,
-                                 n_cells_min_in_ass_to_plot=2,
-                                 do_filter_spike_trains=False,
-                                 alpha_p_value=0.05,
-                                 sliding_window_ms=10,
-                                 time_str=time_str, with_concatenation=False,
-                                 all_sleep_stages_in_order=False)
+            patient.elephant_cad(**kwargs_elephant_cad)
             continue
 
         do_test = False
