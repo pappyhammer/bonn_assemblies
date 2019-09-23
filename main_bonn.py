@@ -395,7 +395,9 @@ class BonnPatient:
         total_duration = 0
         for ss_index, sleep_stage_data in enumerate(sleep_stages_tmp):
             # sleep_stage_data = sleep_stage_data[0]
-            # print(f"sleep_stage_data {sleep_stage_data}")
+            # print(f"{ss_index} sleep_stage_data {sleep_stage_data}")
+            # The start time of the first stage, might not be the same as the one of the first spike
+            # recorded for this stage, as the data we have don't start at the beginning of a stage.
             ss = SleepStage(number=ss_index, start_time=sleep_stage_data[0][0][0], stop_time=sleep_stage_data[1][0][0],
                             sleep_stage=sleep_stage_data[2][0], conversion_datetime=conversion_datetime[0],
                             conversion_timestamp=conversion_timestamp[0][0])
@@ -627,7 +629,7 @@ class BonnPatient:
                             # (before spike sorting; lags -10 ms to 10 ms, bin size 0.5 ms)
                             spike_trains_binned_0_5 = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=0.5 * pq.ms)
                             # Spike-count correlations
-                            corr_coef_matrix = corrcoef(spike_trains_binned)
+                            corr_coef_matrix = corrcoef(spike_trains_binned_0_5)
                             """
                                A list of lists for each spike train (i.e., rows of the binned matrix), 
                                that in turn contains for each spike the index into the binned matrix where this spike enters.
@@ -764,7 +766,7 @@ class BonnPatient:
                                 # file.write(f"activation_orders count {act_orders_dict}" + '\n')
                                 counts_arg_sorted = np.argsort(list(act_orders_dict.values()))
                                 act_order_values = list(act_orders_dict.keys())
-                                for act_order_index in counts_arg_sorted[::-1]
+                                for act_order_index in counts_arg_sorted[::-1]:
                                     act_order = act_order_values[act_order_index]
                                     diff_lists = act_diffs_by_order_dict[act_order]
                                     to_print = f"{act_order}: rep {act_orders_dict[act_order]}, "
@@ -1160,8 +1162,10 @@ class BonnPatient:
             micro_wire_to_keep = []
             if (channels_starting_by is None):
                 micro_wire_to_keep = self.available_micro_wires
+                print(f"n microwires: {len(micro_wire_to_keep)}")
             else:
                 indices, channels = self.select_channels_starting_by(channels_starting_by)
+
                 micro_wire_to_keep.extend(indices)
                 # remove redondant microwire and sort them
                 micro_wire_to_keep = np.unique(micro_wire_to_keep)
@@ -1171,6 +1175,7 @@ class BonnPatient:
                     for d in to_del:
                         micro_wire_to_keep = micro_wire_to_keep[micro_wire_to_keep != d]
 
+                print(f"n microwiresin {channels_starting_by}: {len(micro_wire_to_keep)}")
             mu_by_area_count = SortedDict()
             su_by_area_count = SortedDict()
             # A	AH	EC	MH	PH	PHC
@@ -1204,6 +1209,346 @@ class BonnPatient:
             print(f"mu_by_area_count: {mu_by_area_count}")
             print(f"su_by_area_count: {su_by_area_count}")
             print("")
+
+        print("sleep stages: ")
+        for sleep_stage in self.sleep_stages:
+            print(sleep_stage)
+
+    def are_stages_concatenable(self, ss_1, ss_2):
+        """
+        Check if we can  concatenate 2 stages
+        Args:
+            ss_1:
+            ss_2:
+            join_sws:
+
+        Returns:
+
+        """
+        # only stage 1, 2 and 3 could be next to each other
+        if ss_1.sleep_stage in ['123']:
+            if ss_2.sleep_stage in ['123']:
+                return True
+            else:
+                return False
+        else:
+            return False
+
+
+    def construct_spike_structure_new_version(self, spike_trains_format=True, spike_nums_format=True,
+                                              max_duration_in_sec=240,
+                                              join_sws=True,
+                                              sleep_stage_indices=None,
+                                              sleep_stage_selection=None, channels_starting_by=None,
+                                              channels_without_number=None, channels_with_number=None,
+                                              title=None, keeping_only_SU=False):
+        """
+
+        :param sleep_stage_index: list of sleep_stage_index
+        :param join_sws: means all stages that are not R and W, will be considered the same
+        :param spike_trains_format: if True, will construct a spike_trains into Spiketructure
+        :param spike_nums_format: if True, will construct a spike_nums SpikeStructure
+        :param channels: list of str, if empty list, take them all, otherwise take the one starting with the same
+        name (like "RAH" take RAH1, RAH2 etc...., if just "R" take all microwire on the right)
+        :param channels_to_study: full name without numbers
+        :return: list of spike_struct
+        """
+        # print(f"construct_spike_structure start for {self.patient_id}")
+        # don't put non-assigned clusters
+        only_SU_and_MU = True
+        # toto
+        micro_wire_to_keep = []
+        if (channels_starting_by is None) and (channels_without_number is None) and (channels_with_number is None):
+            micro_wire_to_keep = self.available_micro_wires
+        else:
+            if channels_starting_by is None:
+                channels_starting_by = []
+
+            if channels_without_number is None:
+                channels_without_number = []
+
+            if channels_with_number is None:
+                channels_with_number = []
+            indices, channels = self.select_channels_starting_by(channels_starting_by)
+            micro_wire_to_keep.extend(indices)
+            indices, channels = self.select_channels_with_exact_same_name_without_number(channels_without_number)
+            micro_wire_to_keep.extend(indices)
+            micro_wire_to_keep.extend(self.select_channels_with_exact_same_name_with_number(channels_with_number))
+            # remove redondant microwire and sort them
+            micro_wire_to_keep = np.unique(micro_wire_to_keep)
+            # then we check if all the micro_wire data are available
+            to_del = np.setdiff1d(micro_wire_to_keep, self.available_micro_wires)
+            if len(to_del) > 0:
+                for d in to_del:
+                    micro_wire_to_keep = micro_wire_to_keep[micro_wire_to_keep != d]
+        # print(f"micro_wire_to_keep {micro_wire_to_keep}")
+        channels_to_keep = [self.channel_info_by_microwire[micro_wire] for micro_wire in micro_wire_to_keep]
+        # if (sleep_stage_indices is None) and (sleep_stage_selection is None):
+        #     return
+
+        sleep_stages_to_keep = []
+        if sleep_stage_indices is not None:
+            for index in sleep_stage_indices:
+                sleep_stages_to_keep.append(self.sleep_stages[index])
+
+        if sleep_stage_selection is not None:
+            sleep_stages_to_keep.extend(self.selection_sleep_stage_by_stage(sleep_stage_selection))
+
+        if len(sleep_stages_to_keep) == 0:
+            # then we put all stages in the order they were recorded
+            sleep_stages_to_keep = self.sleep_stages
+        # for ss in sleep_stages_to_keep:
+        #     print(ss)
+
+        last_timestamps = None
+        spike_struct_list = list()
+        index_sleep_stage = 0
+        min_duration_sec = 10
+
+        while index_sleep_stage < len(sleep_stages_to_keep):
+
+            n_stages_used = 0
+            stages_used = []
+            current_duration_sec = 0
+            if last_timestamps is None:
+                start_time = None
+            else:
+                start_time = last_timestamps + 1
+            stop_time = None
+            for ss_index, ss in enumerate(sleep_stages_to_keep[index_sleep_stage:]):
+                ss_index = index_sleep_stage + ss_index
+                stages_used.append(ss)
+                # first we define the start_time and stop_time of to cover max_duration
+                if start_time is None:
+                    start_time = ss.start_time
+                    # duration is in microseconds
+                    duration = ss.stop_time - ss.start_time
+                    duration_sec = duration / 1000000
+                    if duration_sec < max_duration_in_sec:
+                        current_duration_sec += duration_sec
+                        n_stages_used += 1
+                        # we checked if we can continue depending of the next sleep stage
+                        if ss_index == (len(sleep_stages_to_keep) - 1):
+                            continue
+                        if not join_sws:
+                            break
+                        if self.are_stages_concatenable(ss_1=ss, ss_2=sleep_stages_to_keep[ss_index+1]):
+                            continue
+                        else:
+                            break
+
+                    else:
+                        current_duration_sec = max_duration_in_sec
+                        stop_time = ss.start_time + (max_duration_in_sec * 1000000)
+                        break
+                else:
+                    # start_time is not None
+                    duration = ss.stop_time - start_time
+                    duration_sec = duration / 1000000
+                    if duration_sec < max_duration_in_sec:
+                        current_duration_sec += duration_sec
+                        n_stages_used += 1
+                        # we checked if we can continue depending of the next sleep stage
+                        if ss_index == (len(sleep_stages_to_keep) - 1):
+                            continue
+                        if not join_sws:
+                            break
+                        if self.are_stages_concatenable(ss_1=ss, ss_2=sleep_stages_to_keep[ss_index+1]):
+                            continue
+                        else:
+                            break
+                    else:
+                        current_duration_sec = max_duration_in_sec
+                        stop_time = start_time + (max_duration_in_sec * 1000000)
+                        break
+
+            index_sleep_stage += n_stages_used
+
+            last_timestamps = stop_time
+
+            if current_duration_sec < min_duration_sec:
+                # setting a min duration
+                print("Min duration reached, skipping to next one")
+                continue
+
+            # selecting spikes that happen during the time interval of selected sleep stages
+            # in order to plot a raster plot, a start time and end time is needed
+            # so for each stage selected, we should keep the timestamp of the first spike and the timestamp of the
+            # last spike
+
+            # first containing how many lines on spike_nums,
+
+            nb_units_spike_nums = 0
+            for mw_index, micro_wire in enumerate(micro_wire_to_keep):
+                if only_SU_and_MU:
+                    nb_units_to_keep = 0
+                    cluster_infos = self.cluster_info[micro_wire][0]
+                    for unit_cluster, spikes_time in self.spikes_time_by_microwire[micro_wire].items():
+                        cluster = cluster_infos[unit_cluster]
+                        if (cluster < 1) or (cluster > 2):
+                            continue
+                        if keeping_only_SU:
+                            if cluster == 1:
+                                # not taking into consideraiton MU
+                                continue
+                        # looking if there are spiking
+                        at_least_a_spike = False
+                        spikes_time = np.copy(spikes_time)
+                        spikes_time = spikes_time[spikes_time >= start_time]
+                        spikes_time = spikes_time[spikes_time <= stop_time]
+                        if len(spikes_time) > 0:
+                            # counting it only if there is some spike during that interval
+                            nb_units_to_keep += 1
+
+                    nb_units_spike_nums += nb_units_to_keep
+                else:
+                    nb_units_spike_nums += len(self.spikes_time_by_microwire[micro_wire])
+
+            spike_trains = None
+            spike_nums = None
+            if spike_trains_format:
+                spike_trains = [np.zeros(0)] * nb_units_spike_nums
+            if spike_nums_format:
+                spike_nums = np.zeros((nb_units_spike_nums, 0), dtype="int8")
+
+            # dict with key the microwire number and the value is a dict with keys the cluster position and value
+            # are the spikes for each cluster
+            micro_wires_spikes_time_stamps = dict()
+            # correspondance between micro_wire number and their units and index in the spike_nums matrix
+            micro_wires_spike_nums_index = dict()
+            units_index = 0
+            for mw_index, micro_wire in enumerate(micro_wire_to_keep):
+                micro_wires_spike_nums_index[micro_wire] = dict()  # mw_index
+                micro_wires_spikes_time_stamps[micro_wire] = dict()
+                cluster_infos = self.cluster_info[micro_wire][0]
+                for unit_cluster, spikes_time in self.spikes_time_by_microwire[micro_wire].items():
+                    cluster = cluster_infos[unit_cluster]
+                    # not taking into consideration artifact or non clustered
+                    if (cluster < 1) or (cluster > 2):
+                        continue
+                    if keeping_only_SU:
+                        if cluster == 1:
+                            # not taking into consideraiton MU
+                            continue
+                    # spikes_time = np.copy(self.spikes_time_by_microwire[micro_wire])
+                    # print(f"micro_wire {micro_wire}, spikes_time {spikes_time}")
+                    spikes_time = np.copy(spikes_time)
+                    spikes_time = spikes_time[spikes_time >= start_time]
+                    spikes_time = spikes_time[spikes_time <= stop_time]
+                    # print(f"filtered: micro_wire {micro_wire}, spikes_time {spikes_time}")
+                    if len(spikes_time) > 0:
+                        if (min_time is None) or (spikes_time[0] < min_time):
+                            min_time = spikes_time[0]
+                        if (max_time is None) or (spikes_time[-1] > max_time):
+                            max_time = spikes_time[-1]
+                    else:
+                        # if no spikes we don't keep it
+                        continue
+                    micro_wires_spikes_time_stamps[micro_wire][unit_cluster] = spikes_time
+                    # units_index represents the line number on spike_nums
+                    micro_wires_spike_nums_index[micro_wire][unit_cluster] = units_index
+                    units_index += 1
+
+            if spike_trains_format:
+                # keeping the original time_stamps, even for different sleep stages, means there is going to be
+                # large gap if concatenation is done
+                for micro_wire, units_time_stamps_dict in micro_wires_spikes_time_stamps.items():
+                    for units_cluster_index, time_stamps in units_time_stamps_dict.items():
+                        cluster_infos = self.cluster_info[micro_wire][0]
+                        cluster = cluster_infos[units_cluster_index]
+                        # to change
+                        if only_SU_and_MU:
+                            if (cluster < 1) or (cluster > 2):
+                                continue
+
+                            if keeping_only_SU:
+                                if cluster == 1:
+                                    # not taking into consideraiton MU
+                                    continue
+                        # micro_wires_spike_nums_index[micro_wire][units_cluster_index]
+                        # corresponds to the line number of spike_nums
+                        unit_index = micro_wires_spike_nums_index[micro_wire][units_cluster_index]
+                        if len(spike_trains[unit_index]) == 0:
+                            spike_trains[unit_index] = time_stamps
+                        else:
+                            spike_trains[unit_index] = np.concatenate((spike_trains[unit_index], time_stamps))
+                        # print(f"{unit_index}: len(time_stamps) {len(time_stamps)}")
+
+            if spike_nums_format:
+                len_for_ss = int(max_time - min_time)
+                # print(f"len_for_ss {len_for_ss}")
+                # new index, using the min time stamp as a reference
+                new_micro_wires_spikes_time_stamps = dict()
+                for micro_wire, units_time_stamps_dict in micro_wires_spikes_time_stamps.items():
+                    new_micro_wires_spikes_time_stamps[micro_wire] = dict()
+                    for units_cluster_index, time_stamps in units_time_stamps_dict.items():
+                        new_micro_wires_spikes_time_stamps[micro_wire][units_cluster_index] = time_stamps - min_time
+                    # print(f"micro_wire {micro_wire}, time_stamps-min_time {time_stamps-min_time}")
+                micro_wires_spikes_time_stamps = new_micro_wires_spikes_time_stamps
+
+                print(f"nb_units_spike_nums {nb_units_spike_nums}, spike_nums.shape[1] {spike_nums.shape[1]}, "
+                      f"len_for_ss {len_for_ss}")
+                new_spike_nums = np.zeros((nb_units_spike_nums, (spike_nums.shape[1] + len_for_ss + 1)),
+                                          dtype="int8")
+                new_spike_nums[:, :spike_nums.shape[1]] = spike_nums
+                for micro_wire, units_time_stamps_dict in micro_wires_spikes_time_stamps.items():
+                    for units_cluster_index, time_stamps in units_time_stamps_dict.items():
+                        cluster_infos = self.cluster_info[micro_wire][0]
+                        cluster = cluster_infos[units_cluster_index]
+                        # to change
+                        if only_SU_and_MU:
+                            if (cluster < 1) or (cluster > 2):
+                                continue
+                            if keeping_only_SU:
+                                if cluster == 1:
+                                    # not taking into consideraiton MU
+                                    continue
+                        # micro_wires_spike_nums_index[micro_wire][units_cluster_index]
+                        # corresponds to the line number of spike_nums
+                        new_spike_nums[micro_wires_spike_nums_index[micro_wire][units_cluster_index],
+                                       spike_nums.shape[1] + time_stamps.astype(int)] = 1
+                spike_nums = new_spike_nums
+
+            # print(f"spike_nums.shape {spike_nums.shape}")
+            # print(f"np.sum(spike_nums, axis=1) {np.sum(spike_nums, axis=1)}")
+            # to display raster plot, a binage will be necessary
+
+            # used to labels the ticks
+            micro_wire_labels = []
+            cluster_labels = []
+            for i, micro_wire in enumerate(micro_wire_to_keep):
+                for unit_cluster_index in self.spikes_time_by_microwire[micro_wire].keys():
+                    cluster_infos = self.cluster_info[micro_wire][0]
+                    cluster = cluster_infos[unit_cluster_index]
+                    if only_SU_and_MU:
+                        if (cluster < 1) or (cluster > 2):
+                            continue
+                        if keeping_only_SU:
+                            if cluster == 1:
+                                # not taking into consideraiton MU
+                                continue
+                    micro_wire_labels.append(micro_wire)
+                    cluster_labels.append(cluster)
+
+            # 1 = MU  2 = SU -1 = Artif.
+            # 0 = Unassigned (is ignored)
+            # if spike_trains_format:
+            #     # first transforming list as np.array
+            #     # for i, train in enumerate(spike_trains):
+            #     #     spike_trains[i] = np.array(spike_trains[i])
+            #     spike_struct = SpikeTrainsStructure(patient=self, spike_trains=spike_trains,
+            #                                         microwire_labels=micro_wire_labels,
+            #                                         cluster_labels=cluster_labels,
+            #                                         title=title)
+            # else:
+            spike_struct = SpikeStructure(patient=self, spike_trains=spike_trains, spike_nums=spike_nums,
+                                          microwire_labels=micro_wire_labels,
+                                          cluster_labels=cluster_labels,
+                                          title=title)
+            spike_struct_list.append(spike_struct)
+        # print(f"End of construct_spike_structure for {self.patient_id}")
+        return spike_struct_list  # spike_nums, micro_wire_to_keep, channels_to_keep, labels
+
 
     def construct_spike_structure(self, spike_trains_format=True, spike_nums_format=True,
                                   sleep_stage_indices=None,
@@ -1538,6 +1883,276 @@ def save_data(channels_selection, patient_id, param,
              cluster_labels=cluster_labels)
 
 
+def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patient,
+                      n_surrogate_activity_threshold, perc_threshold, debug_mode):
+    # ------------------------ params ------------------------
+    with_cells_in_cluster_seq_sorted = False
+    do_fca_clustering = False
+    # kmean clustering
+    range_n_clusters_k_mean = np.arange(3, 5)
+    n_surrogate_k_mean = 20
+    keep_only_the_best_kmean_cluster = False
+    # shuffling is necessary to select the significant clusters
+    with_shuffling = True
+
+    binsize = 25 * pq.ms
+
+    patient_id = patient.patient_id
+
+    # first we create a spike_trains in the neo format
+    spike_trains = []
+    t_start = None
+    t_stop = None
+    for cell in np.arange(len(spike_struct.spike_trains)):
+        spike_train = spike_struct.spike_trains[cell]
+        # convert frames in ms
+        spike_train = spike_train / 1000
+        spike_trains.append(spike_train)
+        if t_start is None:
+            t_start = spike_train[0]
+        else:
+            t_start = min(t_start, spike_train[0])
+        if t_stop is None:
+            t_stop = spike_train[-1]
+        else:
+            t_stop = max(t_stop, spike_train[-1])
+
+    duration_sec = (t_stop - t_start) / 1000
+    print("")
+    print(f"## duration in sec {np.round(duration_sec, 3)}")
+    print("")
+    if duration_sec > 330:
+        print(f"skipping this stage because duration > 180 sec")
+        path_results = os.path.join(path_results_raw, f"k_mean_{patient_id}_{stage_descr}_skipped")
+        os.mkdir(path_results)
+        return
+
+    path_results = os.path.join(path_results_raw, f"k_mean_{patient_id}_{stage_descr}")
+    os.mkdir(path_results)
+    param.path_results = path_results
+
+    cell_labels = spike_struct.labels
+
+    do_filter_spike_trains = True
+    if do_filter_spike_trains:
+        print(f"n cells before filtering: {len(spike_trains)}: ")
+        filtered_spike_trains = []
+        filtered_cell_labels = []
+        for cell in np.arange(len(spike_trains)):
+            spike_train = spike_trains[cell]
+            n_spike_normalized = len(spike_train) / duration_sec
+            # print(f"n spikes: {n_spike_normalized}")
+            if n_spike_normalized <= 5:
+                filtered_spike_trains.append(spike_train)
+                filtered_cell_labels.append(cell_labels[cell])
+        spike_trains = filtered_spike_trains
+        cell_labels = filtered_cell_labels
+        print(f"n cells after filtering: {len(spike_trains)}")
+        # raise Exception("FILTERING")
+    n_cells = len(spike_trains)
+
+    print(f"Nb units: {len(spike_trains)}")
+    for i, train in enumerate(spike_trains):
+        print(f"{cell_labels[i]}, nb spikes: {train.shape[0]}")
+
+    neo_spike_trains = []
+    for cell in np.arange(n_cells):
+        spike_train = spike_trains[cell]
+        # print(f"n_spikes: {cell_labels[cell]}: {len(spike_train)}")
+        neo_spike_train = neo.SpikeTrain(times=spike_train, units='ms',
+                                         t_start=t_start,
+                                         t_stop=t_stop)
+        neo_spike_trains.append(neo_spike_train)
+
+    spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=binsize)
+
+    # transform the binned spiketrain into array
+    use_z_score_binned_spike_trains = False
+    if use_z_score_binned_spike_trains:
+        data = spike_trains_binned.to_array()
+        # print(f"data.type() {type(data)}")
+        # z-score
+        spike_nums = np.zeros(data.shape, dtype="int8")
+        for cell, binned_spike_train in enumerate(data):
+            mean_train = np.mean(binned_spike_train)
+            print(f"mean_train {mean_train} {np.max(binned_spike_train)}")
+            binned_spike_train = binned_spike_train - mean_train
+            n_before = len(np.where(data[cell] > 0)[0])
+            n = len(np.where(binned_spike_train >= 0)[0])
+            print(f"{cell}: n_before {n_before} vs {n}")
+            spike_nums[cell, binned_spike_train >= 0] = 1
+        # raise Exception("TEST")
+    else:
+        spike_nums = spike_trains_binned.to_bool_array().astype("int8")
+
+    print(f"n bins {spike_nums.shape[1]}")
+    sliding_window_duration = 1
+
+    activity_threshold = get_sce_detection_threshold(spike_nums=spike_nums,
+
+                                                     window_duration=sliding_window_duration,
+                                                     use_max_of_each_surrogate=False,
+                                                     spike_train_mode=False,
+                                                     n_surrogate=n_surrogate_activity_threshold,
+                                                     perc_threshold=perc_threshold,
+                                                     debug_mode=False)
+    # activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
+    #
+    #                                                  window_duration=sliding_window_duration,
+    #                                                  use_max_of_each_surrogate=False,
+    #                                                  spike_train_mode=True,
+    #                                                  n_surrogate=n_surrogate_activity_threshold,
+    #                                                  perc_threshold=perc_threshold,
+    #                                                  debug_mode=False)
+    print(f"activity_threshold {activity_threshold}")
+    if activity_threshold < 2:
+        activity_threshold = 2
+        print(f"activity_threshold increased to: {activity_threshold}")
+    print(f"sliding_window_duration {sliding_window_duration}")
+    spike_struct.activity_threshold = activity_threshold
+    param.activity_threshold = activity_threshold
+    #
+    # print("plot_spikes_raster")
+
+    # plot_spikes_raster(spike_nums=spike_struct.spike_trains, param=patient.param,
+    #                    spike_train_format=True,
+    #                    title=f"raster plot {patient_id}",
+    #                    file_name=f"{stage_descr}_test_spike_nums_{patient_id}",
+    #                    y_ticks_labels=cell_labels,
+    #                    y_ticks_labels_size=4,
+    #                    save_raster=True,
+    #                    show_raster=False,
+    #                    plot_with_amplitude=False,
+    #                    activity_threshold=spike_struct.activity_threshold,
+    #                    # 500 ms window
+    #                    sliding_window_duration=sliding_window_duration,
+    #                    show_sum_spikes_as_percentage=True,
+    #                    spike_shape="|",
+    #                    spike_shape_size=1,
+    #                    save_formats="pdf")
+
+    plot_spikes_raster(spike_nums=spike_nums, param=patient.param,
+                       spike_train_format=False,
+                       title=f"raster plot {patient_id}",
+                       file_name=f"{stage_descr}_test_spike_nums_{patient_id}",
+                       y_ticks_labels=cell_labels,
+                       y_ticks_labels_size=4,
+                       save_raster=True,
+                       show_raster=False,
+                       plot_with_amplitude=False,
+                       activity_threshold=spike_struct.activity_threshold,
+                       # 500 ms window
+                       sliding_window_duration=sliding_window_duration,
+                       show_sum_spikes_as_percentage=True,
+                       spike_shape="|",
+                       spike_shape_size=1,
+                       save_formats="pdf")
+
+    # TODO: detect_sce_with_sliding_window with spike_trains
+    sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_nums,
+                                                          window_duration=sliding_window_duration,
+                                                          perc_threshold=perc_threshold,
+                                                          activity_threshold=activity_threshold,
+                                                          debug_mode=False)
+
+    print(f"sce_with_sliding_window detected")
+    cellsinpeak = sce_detection_result[2]
+    SCE_times = sce_detection_result[1]
+    sce_times_bool = sce_detection_result[0]
+    sce_times_numbers = sce_detection_result[3]
+    print(f"Nb SCE: {cellsinpeak.shape}, sce_times len {len(SCE_times)}")
+    # raise Exception("GAME OVER")
+    # print(f"Nb spikes by SCE: {np.sum(cellsinpeak, axis=0)}")
+    # cells_isi = tools_misc.get_isi(spike_data=spike_struct.spike_trains, spike_trains_format=True)
+    # for cell_index in np.arange(len(spike_struct.spike_trains)):
+    #     print(f"{spike_struct.labels[cell_index]} median isi: {np.round(np.median(cells_isi[cell_index]), 2)}, "
+    #           f"mean isi {np.round(np.mean(cells_isi[cell_index]), 2)}")
+
+    # nb_neurons = len(cellsinpeak)
+
+    # return a dict of list of list of neurons, representing the best clusters
+    # (as many as nth_best_clusters).
+    # the key is the K from the k-mean
+
+    data_descr = f"{patient.patient_id} {stage_descr} sleep"
+
+    if do_fca_clustering:
+        n_surrogate_fca = 20
+        # sigma=sliding_window_duration*2
+        sigma = sliding_window_duration * 0.1
+
+        using_cells_in_peak = True
+        if using_cells_in_peak:
+            n_cells = len(spike_struct.spike_nums)
+            cells_in_peak_trains = []
+            cells_in_peak_nums = np.zeros((n_cells, len(SCE_times)), dtype="uint8")
+            for cell in np.arange(n_cells):
+                cells_spikes = np.where(spike_struct.spike_nums[cell, :])[0]
+                spikes_in_sce = cells_spikes[sce_times_numbers[cells_spikes] > -1]
+                sce_with_spikes = sce_times_numbers[cells_spikes]
+                # removing spikes not in sce
+                sce_with_spikes = sce_with_spikes[sce_with_spikes > - 1]
+                cells_in_peak_nums[cell, sce_with_spikes] = 1
+                cells_in_peak_trains.append(spikes_in_sce)
+
+            compute_and_plot_clusters_raster_fca_version(spike_trains=cells_in_peak_trains,
+                                                         spike_nums=spike_struct.spike_nums,
+                                                         data_descr=data_descr, param=param,
+                                                         sliding_window_duration=sliding_window_duration,
+                                                         SCE_times=SCE_times,
+                                                         sce_times_numbers=sce_times_numbers,
+                                                         perc_threshold=perc_threshold,
+                                                         n_surrogate_activity_threshold=
+                                                         n_surrogate_activity_threshold,
+                                                         sigma=sigma, n_surrogate_fca=n_surrogate_fca,
+                                                         labels=cell_labels,
+                                                         activity_threshold=activity_threshold,
+                                                         fca_early_stop=True,
+                                                         use_uniform_jittering=True,
+                                                         rolling_surrogate=False,
+                                                         with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
+
+        else:
+
+            compute_and_plot_clusters_raster_fca_version(spike_trains=spike_struct.spike_trains,
+                                                         spike_nums=spike_struct.spike_nums,
+                                                         data_descr=data_descr, param=param,
+                                                         sliding_window_duration=sliding_window_duration,
+                                                         SCE_times=SCE_times,
+                                                         sce_times_numbers=sce_times_numbers,
+                                                         perc_threshold=perc_threshold,
+                                                         n_surrogate_activity_threshold=
+                                                         n_surrogate_activity_threshold,
+                                                         sigma=sigma, n_surrogate_fca=n_surrogate_fca,
+                                                         labels=cell_labels,
+                                                         activity_threshold=activity_threshold,
+                                                         fca_early_stop=True,
+                                                         use_uniform_jittering=True,
+                                                         rolling_surrogate=True,
+                                                         with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
+
+    else:
+        compute_and_plot_clusters_raster_kmean_version(labels=cell_labels,
+                                                       activity_threshold=spike_struct.activity_threshold,
+                                                       range_n_clusters_k_mean=range_n_clusters_k_mean,
+                                                       n_surrogate_k_mean=n_surrogate_k_mean,
+                                                       with_shuffling=with_shuffling,
+                                                       spike_nums_to_use=spike_nums,
+                                                       cellsinpeak=cellsinpeak,
+                                                       data_descr=data_descr,
+                                                       param=param,
+                                                       keep_only_the_best=keep_only_the_best_kmean_cluster,
+                                                       sliding_window_duration=sliding_window_duration,
+                                                       SCE_times=SCE_times,
+                                                       sce_times_numbers=sce_times_numbers,
+                                                       perc_threshold=perc_threshold,
+                                                       n_surrogate_activity_threshold=
+                                                       n_surrogate_activity_threshold,
+                                                       debug_mode=debug_mode,
+                                                       fct_to_keep_best_silhouettes=np.median,
+                                                       with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
+
+
 def main():
     root_path = None
     with open("param_bonn.txt", "r", encoding='UTF-8') as file:
@@ -1553,7 +2168,6 @@ def main():
 
     time_str = datetime.now().strftime("%Y_%m_%d.%H-%M-%S")
     path_results = path_results_raw + f"{time_str}"
-    # os.mkdir(path_results)
 
     # ------------------------------ param section ------------------------------
     # param will be set later when the spike_nums will have been constructed
@@ -1569,14 +2183,14 @@ def main():
     # patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
     # patient_ids = ["034fn1", "035fn2"]
     # patient_ids = ["046fn2", "052fn2"]
-    patient_ids = ["034fn1"]
+    # patient_ids = ["034fn1"]
     # patient_ids = ["052fn2"]
     # patient_ids = ["046fn2"]
-    # patient_ids = ["035fn2"] # memory issue
+    patient_ids = ["035fn2"] # memory issue
 
     decrease_factor = 4  # used to be 4
 
-    sliding_window_duration_in_ms = 100  # 250
+    sliding_window_duration_in_ms = 25  # 250
     keeping_only_SU = False
     # 100 ms sliding window
 
@@ -1588,29 +2202,25 @@ def main():
 
     just_do_descriptive_stats = False
 
-    just_do_cad_elephant = True
-    kwargs_elephant_cad = {"path_results":path_results_raw,
+    just_do_cad_elephant = False
+
+    # if not just_do_descriptive_stats or not just_do_cad_elephant:
+    #     os.mkdir(path_results)
+
+    kwargs_elephant_cad = {"path_results": path_results_raw,
                            "n_cells_min_in_ass_to_plot": 2,
                            "do_filter_spike_trains": False,
                            "alpha_p_value": 0.05,
                            "sliding_window_ms": 25,
-                           "time_str":time_str,
+                           "time_str": time_str,
                            "with_concatenation": False,
                            "all_sleep_stages_in_order": False}
+
 
     # ##########################################################################################
     # #################################### CLUSTERING ###########################################
     # ##########################################################################################
-    with_cells_in_cluster_seq_sorted = False
-    do_fca_clustering = False
     do_clustering = True
-
-    # kmean clustering
-    range_n_clusters_k_mean = np.arange(3, 6)
-    n_surrogate_k_mean = 20
-    keep_only_the_best_kmean_cluster = False
-    # shuffling is necessary to select the significant clusters
-    with_shuffling = True
 
     # ##########################################################################################
     # ################################ PATTERNS SEARCH #########################################
@@ -1662,7 +2272,7 @@ def main():
         #                              channels_without_number=["RAH"])
 
         # patient.print_sleep_stages_info(selected_indices=[2])
-        build_raster_for_each_stage = True
+        build_raster_for_each_stage = False
         if build_raster_for_each_stage:
             # patient.build_raster_for_each_stage_sleep(with_ordering=False, with_concatenation=False,
             #                                           decrease_factor=4,
@@ -1694,16 +2304,12 @@ def main():
         for stage_indice in np.arange(len(patient.sleep_stages)):
             # if stage_indice < 7:
             #     continue
-            side_to_analyse = "L"
+            side_to_analyse = "R"
             spike_struct = patient.construct_spike_structure(sleep_stage_indices=[stage_indice],
                                                              channels_starting_by=[side_to_analyse],
                                                              spike_trains_format=True,
-                                                             spike_nums_format=True,
+                                                             spike_nums_format=False,
                                                              keeping_only_SU=keeping_only_SU)
-
-            print(f"Nb units: {len(spike_struct.spike_trains)}")
-            for i, train in enumerate(spike_struct.spike_trains):
-                print(f"{spike_struct.labels[i]}, nb spikes: {train.shape[0]}")
 
             # Left_raster_plot_stage_2_046fn2_2018_08_22.21-47-13
             # spike_nums, micro_wires, channels, labels = patient.construct_spike_structure(sleep_stage_indices=[2],
@@ -1714,15 +2320,38 @@ def main():
             print(f"### patient_id {patient_id}: {stage_descr}")
             print("")
 
-            spike_struct.decrease_resolution(n=decrease_factor)
+
+            print(f"Nb units: {len(spike_struct.spike_trains)}")
+            for i, train in enumerate(spike_struct.spike_trains):
+                print(f"{spike_struct.labels[i]}, nb spikes: {train.shape[0]}")
+
+            # spike_struct.decrease_resolution(n=decrease_factor)
+
             # spike_nums_struct.decrease_resolution (max_time=8)
 
+
             ###################################################################
             ###################################################################
-            # ###########    seq detection param        ##############
+            # ###########    SCE detection and clustering        ##############
+            ###################################################################
+            ###################################################################
+            # sliding_window_duration = spike_struct.get_nb_times_by_ms(sliding_window_duration_in_ms,
+            #                                                           as_int=True)
+
+            if do_clustering:
+                k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patient,
+                                  n_surrogate_activity_threshold, perc_threshold, debug_mode)
+
+            ###################################################################
+            ###################################################################
+            # ##############    Sequences detection        ###################
             ###################################################################
             ###################################################################
 
+            if not go_for_seq_detection:
+                continue
+
+            # ###########    param  ##############
             # around 250 ms
             param.time_inter_seq = spike_struct.get_nb_times_by_ms(time_inter_seq_in_ms,
                                                                    as_int=True)  # 10 ** (6 - decrease_factor) // 4
@@ -1735,156 +2364,6 @@ def main():
             # param.error_rate = param.min_len_seq // 4
             param.error_rate = 0.25
             param.max_branches = 10
-
-            ###################################################################
-            ###################################################################
-            # ###########    SCE detection and clustering        ##############
-            ###################################################################
-            ###################################################################
-            sliding_window_duration = spike_struct.get_nb_times_by_ms(sliding_window_duration_in_ms,
-                                                                      as_int=True)
-
-            activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
-                                                             window_duration=sliding_window_duration,
-                                                             use_max_of_each_surrogate=False,
-                                                             spike_train_mode=True,
-                                                             n_surrogate=n_surrogate_activity_threshold,
-                                                             perc_threshold=perc_threshold,
-                                                             debug_mode=False)
-            print(f"activity_threshold {activity_threshold}")
-            print(f"sliding_window_duration {sliding_window_duration}")
-            spike_struct.activity_threshold = activity_threshold
-            param.activity_threshold = activity_threshold
-
-            # print("plot_spikes_raster")
-
-            plot_spikes_raster(spike_nums=spike_struct.spike_trains, param=patient.param,
-                               spike_train_format=True,
-                               title=f"raster plot {patient_id}",
-                               file_name=f"{stage_descr}_test_spike_nums_{patient_id}",
-                               y_ticks_labels=spike_struct.labels,
-                               y_ticks_labels_size=4,
-                               save_raster=True,
-                               show_raster=False,
-                               plot_with_amplitude=False,
-                               activity_threshold=spike_struct.activity_threshold,
-                               # 500 ms window
-                               sliding_window_duration=sliding_window_duration,
-                               show_sum_spikes_as_percentage=True,
-                               spike_shape="|",
-                               spike_shape_size=1,
-                               save_formats="pdf")
-
-            # TODO: detect_sce_with_sliding_window with spike_trains
-            sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_struct.spike_nums,
-                                                                  window_duration=sliding_window_duration,
-                                                                  perc_threshold=perc_threshold,
-                                                                  activity_threshold=activity_threshold,
-                                                                  debug_mode=False)
-            print(f"sce_with_sliding_window detected")
-            cellsinpeak = sce_detection_result[2]
-            SCE_times = sce_detection_result[1]
-            sce_times_bool = sce_detection_result[0]
-            sce_times_numbers = sce_detection_result[3]
-            print(f"Nb SCE: {cellsinpeak.shape}")
-            # print(f"Nb spikes by SCE: {np.sum(cellsinpeak, axis=0)}")
-            cells_isi = tools_misc.get_isi(spike_data=spike_struct.spike_trains, spike_trains_format=True)
-            for cell_index in np.arange(len(spike_struct.spike_trains)):
-                print(f"{spike_struct.labels[cell_index]} median isi: {np.round(np.median(cells_isi[cell_index]), 2)}, "
-                      f"mean isi {np.round(np.mean(cells_isi[cell_index]), 2)}")
-
-            nb_neurons = len(cellsinpeak)
-
-            # return a dict of list of list of neurons, representing the best clusters
-            # (as many as nth_best_clusters).
-            # the key is the K from the k-mean
-
-            data_descr = f"{patient.patient_id} {stage_descr} sleep"
-            if do_clustering:
-                if do_fca_clustering:
-                    n_surrogate_fca = 20
-                    # sigma=sliding_window_duration*2
-                    sigma = sliding_window_duration * 0.1
-
-                    using_cells_in_peak = True
-                    if using_cells_in_peak:
-                        n_cells = len(spike_struct.spike_nums)
-                        cells_in_peak_trains = []
-                        cells_in_peak_nums = np.zeros((n_cells, len(SCE_times)), dtype="uint8")
-                        for cell in np.arange(n_cells):
-                            cells_spikes = np.where(spike_struct.spike_nums[cell, :])[0]
-                            spikes_in_sce = cells_spikes[sce_times_numbers[cells_spikes] > -1]
-                            sce_with_spikes = sce_times_numbers[cells_spikes]
-                            # removing spikes not in sce
-                            sce_with_spikes = sce_with_spikes[sce_with_spikes > - 1]
-                            cells_in_peak_nums[cell, sce_with_spikes] = 1
-                            cells_in_peak_trains.append(spikes_in_sce)
-
-                        compute_and_plot_clusters_raster_fca_version(spike_trains=cells_in_peak_trains,
-                                                                     spike_nums=spike_struct.spike_nums,
-                                                                     data_descr=data_descr, param=param,
-                                                                     sliding_window_duration=sliding_window_duration,
-                                                                     SCE_times=SCE_times,
-                                                                     sce_times_numbers=sce_times_numbers,
-                                                                     perc_threshold=perc_threshold,
-                                                                     n_surrogate_activity_threshold=
-                                                                     n_surrogate_activity_threshold,
-                                                                     sigma=sigma, n_surrogate_fca=n_surrogate_fca,
-                                                                     labels=spike_struct.labels,
-                                                                     activity_threshold=activity_threshold,
-                                                                     fca_early_stop=True,
-                                                                     use_uniform_jittering=True,
-                                                                     rolling_surrogate=False,
-                                                                     with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
-
-                    else:
-
-                        compute_and_plot_clusters_raster_fca_version(spike_trains=spike_struct.spike_trains,
-                                                                     spike_nums=spike_struct.spike_nums,
-                                                                     data_descr=data_descr, param=param,
-                                                                     sliding_window_duration=sliding_window_duration,
-                                                                     SCE_times=SCE_times,
-                                                                     sce_times_numbers=sce_times_numbers,
-                                                                     perc_threshold=perc_threshold,
-                                                                     n_surrogate_activity_threshold=
-                                                                     n_surrogate_activity_threshold,
-                                                                     sigma=sigma, n_surrogate_fca=n_surrogate_fca,
-                                                                     labels=spike_struct.labels,
-                                                                     activity_threshold=activity_threshold,
-                                                                     fca_early_stop=True,
-                                                                     use_uniform_jittering=True,
-                                                                     rolling_surrogate=True,
-                                                                     with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
-
-                else:
-                    compute_and_plot_clusters_raster_kmean_version(labels=spike_struct.labels,
-                                                                   activity_threshold=spike_struct.activity_threshold,
-                                                                   range_n_clusters_k_mean=range_n_clusters_k_mean,
-                                                                   n_surrogate_k_mean=n_surrogate_k_mean,
-                                                                   with_shuffling=with_shuffling,
-                                                                   spike_nums_to_use=spike_struct.spike_nums,
-                                                                   cellsinpeak=cellsinpeak,
-                                                                   data_descr=data_descr,
-                                                                   param=param,
-                                                                   keep_only_the_best=keep_only_the_best_kmean_cluster,
-                                                                   sliding_window_duration=sliding_window_duration,
-                                                                   SCE_times=SCE_times,
-                                                                   sce_times_numbers=sce_times_numbers,
-                                                                   perc_threshold=perc_threshold,
-                                                                   n_surrogate_activity_threshold=
-                                                                   n_surrogate_activity_threshold,
-                                                                   debug_mode=debug_mode,
-                                                                   fct_to_keep_best_silhouettes=np.median,
-                                                                   with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
-
-            ###################################################################
-            ###################################################################
-            # ##############    Sequences detection        ###################
-            ###################################################################
-            ###################################################################
-
-            if not go_for_seq_detection:
-                continue
 
             print(f"param.min_len_seq {param.min_len_seq},  param.error_rate {param.error_rate}")
 
