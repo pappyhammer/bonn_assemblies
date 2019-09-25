@@ -26,6 +26,7 @@ from pattern_discovery.clustering.fca.fca import compute_and_plot_clusters_raste
 import pattern_discovery.clustering.fca.fca as fca
 from pattern_discovery.clustering.kmean_version.k_mean_clustering import compute_and_plot_clusters_raster_kmean_version
 from pattern_discovery.seq_solver.markov_way import find_sequences_in_ordered_spike_nums
+from pattern_discovery.display.misc import plot_box_plots
 
 import neo
 import quantities as pq
@@ -33,6 +34,7 @@ import elephant.conversion as elephant_conv
 from elephant.spike_train_correlation import corrcoef
 # import elephant.cell_assembly_detection as cad
 from cell_assembly_detection import cell_assembly_detection
+
 
 # TODO: see to use scipy.sparse in the future
 
@@ -496,7 +498,7 @@ class BonnPatient:
 
     def elephant_cad(self, path_results, time_str, sliding_window_ms,
                      alpha_p_value,
-                     do_filter_spike_trains, n_cells_min_in_ass_to_plot,with_concatenation=False,
+                     do_filter_spike_trains, n_cells_min_in_ass_to_plot, with_concatenation=False,
                      all_sleep_stages_in_order=False, save_formats="pdf"):
         """
 
@@ -518,8 +520,8 @@ class BonnPatient:
         # TODO: add a mode to concatenate all SWS stages
         # must be >= 2
         maxlag = 2
-        alpha = alpha_p_value # 0.05
-        test_fake_data=False
+        alpha = alpha_p_value  # 0.05
+        test_fake_data = False
 
         new_dir = f"{self.patient_id}_maxlag_{maxlag}_bin_{sliding_window_ms}_{time_str}"
         path_results = os.path.join(path_results, new_dir)
@@ -593,14 +595,14 @@ class BonnPatient:
                                 n_cells = 20
                                 spike_trains = []
                                 t_start = 0.
-                                t_stop = 60*5*1000
+                                t_stop = 60 * 5 * 1000
 
                                 for cell_index in np.arange(3):
                                     n_spikes = 50
                                     spike_train = np.zeros(n_spikes)
 
                                     for spike in range(n_spikes):
-                                        spike_train[spike] = (spike+1)*5500 + np.random.randint(1, 80)
+                                        spike_train[spike] = (spike + 1) * 5500 + np.random.randint(1, 80)
 
                                     spike_trains.append(spike_train)
 
@@ -609,7 +611,7 @@ class BonnPatient:
                                     spike_train = np.zeros(n_spikes)
 
                                     for spike in range(n_spikes):
-                                        spike_train[spike] = (spike+1)*2900 + + np.random.randint(1, 80)
+                                        spike_train[spike] = (spike + 1) * 2900 + + np.random.randint(1, 80)
 
                                     spike_trains.append(spike_train)
 
@@ -627,7 +629,8 @@ class BonnPatient:
                             spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=binsize)
                             # crosscorrelograms of firing times
                             # (before spike sorting; lags -10 ms to 10 ms, bin size 0.5 ms)
-                            spike_trains_binned_0_5 = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=0.5 * pq.ms)
+                            spike_trains_binned_0_5 = elephant_conv.BinnedSpikeTrain(neo_spike_trains,
+                                                                                     binsize=0.5 * pq.ms)
                             # Spike-count correlations
                             corr_coef_matrix = corrcoef(spike_trains_binned_0_5)
                             """
@@ -648,7 +651,7 @@ class BonnPatient:
                             #     print(f"len(patterns_cad[0]['times']) {len(patterns_cad[0]['times'])}")
 
                             title = f"Stage {sleep_stage} (index {s_index}) {units_str} {side} channels " \
-                                f"{self.patient_id}, duration {np.round(duration_sec, 3)}, n bins: {n_bins}"
+                                    f"{self.patient_id}, duration {np.round(duration_sec, 3)}, n bins: {n_bins}"
                             # stat_stage = f"Duration  {np.round(self.sleep_stages[s_index].duration / 1000000, 3)} sec, " \
                             #     f"n bins: {n_bins}"
                             print("")
@@ -681,10 +684,10 @@ class BonnPatient:
                                           f"vs {len(spike_trains[cell_index])} spikes, "
                                           f"n bins {len(np.unique(spike_indices_in_bins[cell_index]))}")
                                     file.write(f"{cell_labels[cell_index]}: {rep_ass} rep in assembly "
-                                          f"vs {len(spike_trains[cell_index])} spikes, "
-                                          f"n bins {len(np.unique(spike_indices_in_bins[cell_index]))}" + '\n')
+                                               f"vs {len(spike_trains[cell_index])} spikes, "
+                                               f"n bins {len(np.unique(spike_indices_in_bins[cell_index]))}" + '\n')
                                     if order_index < len(patterns['neurons']) - 1:
-                                        next_cell_index = patterns['neurons'][order_index+1]
+                                        next_cell_index = patterns['neurons'][order_index + 1]
                                         pearson_corr = corr_coef_matrix[cell_index, next_cell_index]
                                         print(f"Corr {cell_labels[cell_index]} vs {cell_labels[next_cell_index]}: "
                                               f"{np.round(pearson_corr, 4)}")
@@ -730,7 +733,7 @@ class BonnPatient:
                                     for cell_loop_index, cell in enumerate(cells):
                                         spike_train = np.array(spike_trains[cell])
                                         spike_index = np.searchsorted(spike_train, activation_time)
-                                        spike_index = min(len(spike_train)-1, spike_index)
+                                        spike_index = min(len(spike_train) - 1, spike_index)
                                         activation_spike_times.append(spike_train[spike_index])
                                     sorted_arg = np.argsort(activation_spike_times)
                                     labels_ordered = []
@@ -753,7 +756,8 @@ class BonnPatient:
                                         # print(f"diffs_list {diffs_list}")
                                         act_diffs_by_order_dict[activation_order] = diffs_list
                                     else:
-                                        for index_diff, diffs_list in enumerate(act_diffs_by_order_dict[activation_order]):
+                                        for index_diff, diffs_list in enumerate(
+                                                act_diffs_by_order_dict[activation_order]):
                                             # print(f"diffs_list {diffs_list}")
                                             diffs_list.append(activation_diffs[index][index_diff])
                                 # act_diffs_dict not useful
@@ -812,7 +816,8 @@ class BonnPatient:
                                     if neu not in cell_new_order:
                                         cell_new_order.append(neu)
                                         n_cells_in_ca += 1
-                                cells_to_highlight.extend(np.arange(cell_index_so_far, cell_index_so_far + n_cells_in_ca))
+                                cells_to_highlight.extend(
+                                    np.arange(cell_index_so_far, cell_index_so_far + n_cells_in_ca))
                                 cell_index_so_far += n_cells_in_ca
                                 cells_to_highlight_colors.extend([colors[ca_index % len(colors)]] * n_cells_in_ca)
 
@@ -873,8 +878,8 @@ class BonnPatient:
                                     new_neu_index = np.where(cell_new_order == neu)[0][0]
                                     # color = colors[pattern_index % len(colors)]
                                     color = "red"
-                                    ax.plot(t_start+(patterns['times'] * int(binsize)),
-                                                [new_neu_index] * len(patterns['times']), 'o', color=color)
+                                    ax.plot(t_start + (patterns['times'] * int(binsize)),
+                                            [new_neu_index] * len(patterns['times']), 'o', color=color)
                                     # Raster plot of the data
                                 for st_idx, spike_train in enumerate(spike_trains):
                                     new_st_idx = np.where(cell_new_order == st_idx)[0][0]
@@ -1051,8 +1056,8 @@ class BonnPatient:
                                                                            spike_nums_format=False)
 
                 plot_spikes_raster(spike_nums=spike_nums_struct.spike_trains, param=self.param,
-                               spike_train_format=True,
-                               without_activity_sum=True,
+                                   spike_train_format=True,
+                                   without_activity_sum=True,
                                    title=f"Stage {sleep_stage} {side} channel {self.patient_id}",
                                    file_name=f"{side}_raster_plot_stage_{sleep_stage}_{self.patient_id}",
                                    y_ticks_labels=spike_nums_struct.labels,
@@ -1234,7 +1239,6 @@ class BonnPatient:
         else:
             return False
 
-
     def construct_spike_structure_new_version(self, spike_trains_format=True, spike_nums_format=True,
                                               max_duration_in_sec=240,
                                               join_sws=True,
@@ -1332,7 +1336,7 @@ class BonnPatient:
                             continue
                         if not join_sws:
                             break
-                        if self.are_stages_concatenable(ss_1=ss, ss_2=sleep_stages_to_keep[ss_index+1]):
+                        if self.are_stages_concatenable(ss_1=ss, ss_2=sleep_stages_to_keep[ss_index + 1]):
                             continue
                         else:
                             break
@@ -1353,7 +1357,7 @@ class BonnPatient:
                             continue
                         if not join_sws:
                             break
-                        if self.are_stages_concatenable(ss_1=ss, ss_2=sleep_stages_to_keep[ss_index+1]):
+                        if self.are_stages_concatenable(ss_1=ss, ss_2=sleep_stages_to_keep[ss_index + 1]):
                             continue
                         else:
                             break
@@ -1548,7 +1552,6 @@ class BonnPatient:
             spike_struct_list.append(spike_struct)
         # print(f"End of construct_spike_structure for {self.patient_id}")
         return spike_struct_list  # spike_nums, micro_wire_to_keep, channels_to_keep, labels
-
 
     def construct_spike_structure(self, spike_trains_format=True, spike_nums_format=True,
                                   sleep_stage_indices=None,
@@ -1882,24 +1885,7 @@ def save_data(channels_selection, patient_id, param,
              new_index_order=new_index_order, threshold_value=threshold_value,
              cluster_labels=cluster_labels)
 
-
-def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patient,
-                      n_surrogate_activity_threshold, perc_threshold, debug_mode):
-    # ------------------------ params ------------------------
-    with_cells_in_cluster_seq_sorted = False
-    do_fca_clustering = False
-    # kmean clustering
-    range_n_clusters_k_mean = np.arange(3, 5)
-    n_surrogate_k_mean = 20
-    keep_only_the_best_kmean_cluster = False
-    # shuffling is necessary to select the significant clusters
-    with_shuffling = True
-
-    binsize = 25 * pq.ms
-
-    patient_id = patient.patient_id
-
-    # first we create a spike_trains in the neo format
+def create_spike_train_neo_format(spike_struct):
     spike_trains = []
     t_start = None
     t_stop = None
@@ -1917,6 +1903,54 @@ def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patien
         else:
             t_stop = max(t_stop, spike_train[-1])
 
+    return spike_trains, t_start, t_stop
+
+
+def filter_spike_trains(spike_trains, cell_labels, threshold, duration_sec):
+    """
+    Remove cells that fire the most
+    Args:
+        spike_trains:
+        threshold:
+
+    Returns:
+
+    """
+    print(f"n cells before filtering: {len(spike_trains)}: ")
+    filtered_spike_trains = []
+    filtered_cell_labels = []
+    for cell in np.arange(len(spike_trains)):
+        spike_train = spike_trains[cell]
+        n_spike_normalized = len(spike_train) / duration_sec
+        # print(f"n spikes: {n_spike_normalized}")
+        if n_spike_normalized <= threshold:
+            filtered_spike_trains.append(spike_train)
+            filtered_cell_labels.append(cell_labels[cell])
+
+    print(f"n cells after filtering: {len(filtered_spike_trains)}")
+    return filtered_spike_trains, filtered_cell_labels
+
+
+def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patient,
+                      do_filter_spike_trains,
+                      n_surrogate_activity_threshold, perc_threshold, debug_mode):
+    # ------------------------ params ------------------------
+    with_cells_in_cluster_seq_sorted = False
+    do_fca_clustering = False
+    # kmean clustering
+    range_n_clusters_k_mean = np.arange(3, 5)
+    n_surrogate_k_mean = 20
+    keep_only_the_best_kmean_cluster = False
+    # shuffling is necessary to select the significant clusters
+    with_shuffling = True
+
+    binsize = 25 * pq.ms
+
+    patient_id = patient.patient_id
+
+    # first we create a spike_trains in the neo format
+    spike_trains, t_start, t_stop = create_spike_train_neo_format(spike_struct)
+
     duration_sec = (t_stop - t_start) / 1000
     print("")
     print(f"## duration in sec {np.round(duration_sec, 3)}")
@@ -1933,22 +1967,12 @@ def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patien
 
     cell_labels = spike_struct.labels
 
-    do_filter_spike_trains = True
     if do_filter_spike_trains:
-        print(f"n cells before filtering: {len(spike_trains)}: ")
-        filtered_spike_trains = []
-        filtered_cell_labels = []
-        for cell in np.arange(len(spike_trains)):
-            spike_train = spike_trains[cell]
-            n_spike_normalized = len(spike_train) / duration_sec
-            # print(f"n spikes: {n_spike_normalized}")
-            if n_spike_normalized <= 5:
-                filtered_spike_trains.append(spike_train)
-                filtered_cell_labels.append(cell_labels[cell])
+        filtered_spike_trains, filtered_cell_labels = filter_spike_trains(spike_trains,
+                                                                          cell_labels, threshold=5,
+                                                                          duration_sec=duration_sec)
         spike_trains = filtered_spike_trains
         cell_labels = filtered_cell_labels
-        print(f"n cells after filtering: {len(spike_trains)}")
-        # raise Exception("FILTERING")
     n_cells = len(spike_trains)
 
     print(f"Nb units: {len(spike_trains)}")
@@ -2152,6 +2176,506 @@ def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patien
                                                        fct_to_keep_best_silhouettes=np.median,
                                                        with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
 
+def read_kmean_cell_assembly_file(file_name):
+    # list of list, each list correspond to one cell assemblie
+    cell_assemblies = []
+    # key is the CA index, eachkey is a list correspond to tuples
+    # (first and last index of the SCE in frames)
+    sce_times_in_single_cell_assemblies = dict()
+    sce_times_in_multiple_cell_assemblies = []
+    # list of list, each list correspond to tuples (first and last index of the SCE in frames)
+    sce_times_in_cell_assemblies = []
+    # for each cell, list of list, each correspond to tuples (first and last index of the SCE in frames)
+    # in which the cell is supposed to be active for the single cell assemblie to which it belongs
+    sce_times_in_cell_assemblies_by_cell = dict()
+
+    with open(file_name, "r", encoding='UTF-8') as file:
+        param_section = False
+        cell_ass_section = False
+        for nb_line, line in enumerate(file):
+            if line.startswith("#PARAM#"):
+                param_section = True
+                continue
+            if line.startswith("#CELL_ASSEMBLIES#"):
+                cell_ass_section = True
+                param_section = False
+                continue
+            if cell_ass_section:
+                if line.startswith("SCA_cluster"):
+                    cells = []
+                    line_list = line.split(':')
+                    cells = line_list[2].split(" ")
+                    cell_assemblies.append([int(cell) for cell in cells])
+                elif line.startswith("single_sce_in_ca"):
+                    line_list = line.split(':')
+                    ca_index = int(line_list[1])
+                    sce_times_in_single_cell_assemblies[ca_index] = []
+                    couples_of_times = line_list[2].split("#")
+                    for couple_of_time in couples_of_times:
+                        times = couple_of_time.split(" ")
+                        sce_times_in_single_cell_assemblies[ca_index].append([int(t) for t in times])
+                        sce_times_in_cell_assemblies.append([int(t) for t in times])
+                elif line.startswith("multiple_sce_in_ca"):
+                    line_list = line.split(':')
+                    sces_times = line_list[1].split("#")
+                    for sce_time in sces_times:
+                        times = sce_time.split(" ")
+                        sce_times_in_multiple_cell_assemblies.append([int(t) for t in times])
+                        sce_times_in_cell_assemblies.append([int(t) for t in times])
+                elif line.startswith("cell"):
+                    line_list = line.split(':')
+                    if len(line_list) > 3:
+                        # it means the cell is not in a SCE
+                        continue
+                    cell = int(line_list[1])
+                    sce_times_in_cell_assemblies_by_cell[cell] = []
+                    sces_times = line_list[2].split("#")
+                    for sce_time in sces_times:
+                        times = sce_time.split()
+                        sce_times_in_cell_assemblies_by_cell[cell].append([int(t) for t in times])
+
+    return cell_assemblies, sce_times_in_single_cell_assemblies, sce_times_in_multiple_cell_assemblies, \
+           sce_times_in_cell_assemblies, sce_times_in_cell_assemblies_by_cell
+
+
+def get_stability_among_cell_assemblies(assemblies_1, assemblies_2):
+    """
+    
+    Args:
+        assemblies_1: list of int reprensenting the index of a unit
+        assemblies_2:
+
+    Returns: list of the same size as assembly_1, of integers representing the percentage of cells in each
+    assembly that are part of a same assemby in assemblies_2
+
+    """
+    divide_by_total_of_both = True
+    perc_list = list()
+    for ass_1 in assemblies_1:
+        if len(ass_1) == 0:
+            continue
+        max_perc = 0
+        for ass_2 in assemblies_2:
+            # easiest way would be to use set() and intersection, but as 2 channels could have the same name
+            # we want to have 2 instances different, even so we won't know for sure if that's the same
+            n_in_common = len(list(set(ass_1).intersection(ass_2)))
+            all_channels = []
+            all_channels.extend(ass_1)
+            all_channels.extend(ass_2)
+            n_different_channels = len(set(all_channels))
+            #
+            if divide_by_total_of_both:
+                perc = (n_in_common / n_different_channels) * 100
+            else:
+                perc = (n_in_common / len(ass_1)) * 100
+            max_perc = max(max_perc, perc)
+        perc_list.append(max_perc)
+    return perc_list
+
+def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_results, param):
+    data_dict = dict()
+
+    # look for filenames in the fisrst directory, if we don't break, it will go through all directories
+    for (dirpath, dirnames, local_filenames) in os.walk(path_kmean_dir):
+        for dir_name in dirnames:
+            data_dict[dir_name] = dict()
+        break
+
+    if len(data_dict) == 0:
+        print("read_kmean_results no directories")
+        return
+
+    patients_dict = dict()
+
+    def extract_dir_name_info(dir_name):
+        # "k_mean_034fn1_R stage 3 index 10_skipped"
+        no_assembly = False
+        skipped = False
+        index_1st_ = dir_name[2:].find("_") + 2
+        index_2nd_ = dir_name[index_1st_+1:].find("_") + index_1st_+1
+        patient_id = dir_name[index_1st_+1:index_2nd_]
+        other_infos = dir_name[index_2nd_+1:].split()
+        recording_side = other_infos[0]
+        stage = other_infos[2]
+        index_stage = other_infos[4]
+        if "skipped" in index_stage:
+            index_ = index_stage.find("_")
+            index_stage = int(index_stage[:index_])
+            skipped = True
+        elif "no_assembly" in index_stage:
+            index_ = index_stage.find("_")
+            index_stage = int(index_stage[:index_])
+            no_assembly = True
+        else:
+            index_stage = int(index_stage)
+        return patient_id, recording_side, stage, index_stage, skipped, no_assembly
+
+    info_by_index_dict = dict()
+    # first key is the patient
+    # value is a dict with 6 keys (differents stages + 'SWS')
+    # and value 4 lists representing the n_cells, n_repeat, main_representation and %
+    n_cells_repet_dict = dict()
+    # first key is the patient id, then the index of the stage,
+    for dir_name in data_dict.keys():
+        infos = extract_dir_name_info(dir_name)
+        # if infos is None:
+        #     continue
+        patient_id, recording_side, stage, index_stage, skipped, no_assembly = infos
+
+        if patient_id not in patients_to_analyse:
+            continue
+            
+        print(f"patient_id {patient_id}, recording_side {recording_side}, "
+              f"stage {stage}, index_stage {index_stage}, skipped {skipped}")
+        if skipped or no_assembly:
+            continue
+        if patient_id not in info_by_index_dict:
+            info_by_index_dict[patient_id] = dict()
+        if patient_id not in n_cells_repet_dict:
+            n_cells_repet_dict[patient_id] = dict()
+            for key in ["1", "2", "3", "R", "W", "SWS"]:
+                n_cells_repet_dict[patient_id][key] = dict()
+                # first one is the total duration and second the number of stages periods in consideration
+                # third sum of all the units (SU + MU)
+                n_cells_repet_dict[patient_id][key]["count"] = [0, 0, 0]
+        if index_stage not in info_by_index_dict[patient_id]:
+            info_by_index_dict[patient_id][index_stage] = dict()
+        if recording_side not in info_by_index_dict[patient_id][index_stage]:
+            info_by_index_dict[patient_id][index_stage][recording_side] = dict()
+
+        info_by_index_dict[patient_id][index_stage][recording_side]["stage"] = stage
+
+        # reading the assembly files in the dire
+        assembly_file_name = None
+        local_dir = os.path.join(path_kmean_dir, dir_name)
+        for (dirpath, dirnames, local_filenames) in os.walk(local_dir):
+            for file_name in local_filenames:
+                if file_name.endswith(".txt") and "cell_assemblies_data" in file_name:
+                    assembly_file_name = file_name
+            break
+        # print(f"local_dir {local_dir}")
+        assembly_file_name = os.path.join(local_dir, assembly_file_name)
+
+        cell_ass_info = read_kmean_cell_assembly_file(assembly_file_name)
+
+        cell_assemblies = cell_ass_info[0]
+        sce_times_in_single_cell_assemblies = cell_ass_info[1]
+        sce_times_in_multiple_cell_assemblies = cell_ass_info[2]
+        sce_times_in_cell_assemblies = cell_ass_info[3]
+        sce_times_in_cell_assemblies_by_cell = cell_ass_info[4]
+
+        # loading patient data
+        if patient_id not in patients_dict:
+            patient = BonnPatient(data_path=data_path, patient_id=patient_id, param=param)
+            patients_dict[patient_id] = patient
+        else:
+            patient = patients_dict[patient_id]
+
+        spike_struct = patient.construct_spike_structure(sleep_stage_indices=[index_stage],
+                                                         channels_starting_by=[recording_side],
+                                                         spike_trains_format=True,
+                                                         spike_nums_format=False,
+                                                         keeping_only_SU=False)
+        spike_trains, t_start, t_stop = create_spike_train_neo_format(spike_struct)
+
+        duration_sec = (t_stop - t_start) / 1000
+
+        print(f"## duration in sec {np.round(duration_sec, 3)}")
+
+
+        cell_labels = spike_struct.labels
+        do_filter_spike_trains = True
+        if do_filter_spike_trains:
+            filtered_spike_trains, filtered_cell_labels = filter_spike_trains(spike_trains,
+                                                                              cell_labels,
+                                                                              threshold=5,
+                                                                              duration_sec=duration_sec)
+            spike_trains = filtered_spike_trains
+            cell_labels = filtered_cell_labels
+        n_cells = len(spike_trains)
+
+        # first one is the total duration and second the number of stages periods in consideration
+        stages = [stage]
+        if stage in '123':
+            stages.append("SWS")
+        for stage_to_add in stages:
+            n_cells_repet_dict[patient_id][stage_to_add]["count"][0] = \
+                n_cells_repet_dict[patient_id][stage_to_add]["count"][0] + duration_sec
+            n_cells_repet_dict[patient_id][stage_to_add]["count"][1] = \
+                n_cells_repet_dict[patient_id][stage_to_add]["count"][1] + 1
+            n_cells_repet_dict[patient_id][stage_to_add]["count"][2] = \
+                n_cells_repet_dict[patient_id][stage_to_add]["count"][2] + n_cells
+
+        cell_assemblies_by_microwires = list()
+        for cell_assembly_index, cell_assembly in enumerate(cell_assemblies):
+            n_repeat = 0
+            if cell_assembly_index in sce_times_in_single_cell_assemblies:
+                n_repeat = len(sce_times_in_single_cell_assemblies[cell_assembly_index])
+            print(f"Cell assembly n° {cell_assembly_index}, n repet {n_repeat}")
+            cells_str = ""
+            microwires_list = []
+            for cell in cell_assembly:
+                microwires_list.append(cell_labels[cell])
+                cells_str = cells_str + f"{cell_labels[cell]} - "
+            cells_str = cells_str[:-3]
+            cell_assemblies_by_microwires.append(microwires_list)
+            counter_dict = count_channels_among_microwires(microwires_list=microwires_list,
+                                                           hippocampus_as_one=True)
+            print(f"{cells_str}")
+            print(f"counter_dict {counter_dict}")
+            highest_rate_channel = ""
+            highest_rate = 0
+            for channel, count in counter_dict.items():
+                rate = np.round((count / len(microwires_list)) * 100, 2)
+                print(f"{channel}: {rate}")
+                if highest_rate < rate:
+                    highest_rate = rate
+                    highest_rate_channel = channel
+
+            if n_repeat == 0:
+                continue
+            n_cells_in_ass = len(cell_assembly)
+            stages = [stage]
+            if stage in '123':
+                stages.append("SWS")
+            for stage_to_add in stages:
+                if highest_rate_channel not in n_cells_repet_dict[patient_id][stage_to_add]:
+                    n_cells_repet_dict[patient_id][stage_to_add][highest_rate_channel] = [[], [], []]
+                n_cells_repet_dict[patient_id][stage_to_add][highest_rate_channel][0].append(n_cells_in_ass)
+                # n repeat by min
+                n_repeat_norm = n_repeat * (60 / duration_sec)
+                n_cells_repet_dict[patient_id][stage_to_add][highest_rate_channel][1].append(n_repeat_norm)
+                n_cells_repet_dict[patient_id][stage_to_add][highest_rate_channel][2].append(highest_rate)
+
+        info_by_index_dict[patient_id][index_stage][recording_side][
+            "cell_assemblies_mw"] = cell_assemblies_by_microwires
+        info_by_index_dict[patient_id][index_stage][recording_side][
+            "cell_assemblies_index"] = cell_assemblies
+        print("")
+
+    # -------- cell assemblies statbility --------
+    same_stage_stabilites = dict()
+    # looking 2 stages further
+    same_stage_stabilites_gap = dict()
+    different_stage_stabilities = dict()
+    different_stage_stabilities_gap = dict()
+    # now we want to know the proportion of cell assemblies constant from one stage to the other
+    for patient_id, index_stage_dict in info_by_index_dict.items():
+        if patient_id not in same_stage_stabilites:
+            same_stage_stabilites[patient_id] = []
+            same_stage_stabilites_gap[patient_id] = []
+            different_stage_stabilities[patient_id] = []
+            different_stage_stabilities_gap[patient_id] = []
+        for index_stage, recording_side_dict in index_stage_dict.items():
+            for recording_side, cell_ass_dict in recording_side_dict.items():
+                stage = cell_ass_dict["stage"]
+                cell_assemblies_by_index = cell_ass_dict["cell_assemblies_index"]
+                # getting the one from next stage
+                for next_index_stage in [index_stage+1, index_stage+2]:
+                    if next_index_stage in index_stage_dict and (recording_side in index_stage_dict[next_index_stage]):
+                        next_stage = index_stage_dict[next_index_stage][recording_side]["stage"]
+                        next_cell_assemblies = index_stage_dict[next_index_stage][recording_side]["cell_assemblies_index"]
+                        stabilities = get_stability_among_cell_assemblies(cell_assemblies_by_index,
+                                                                          next_cell_assemblies)
+                        same_stages = False
+                        if stage in "123":
+                            if next_stage in "123":
+                                same_stages = True
+                        elif stage == "R":
+                            if next_stage == "R":
+                                same_stages = True
+                        elif stage == "W":
+                            if next_stage == "W":
+                                same_stages = True
+                        if same_stages:
+                            if next_index_stage == index_stage+1:
+                                same_stage_stabilites[patient_id].extend(stabilities)
+                            else:
+                                same_stage_stabilites_gap[patient_id].extend(stabilities)
+                        else:
+                            if next_index_stage == index_stage + 1:
+                                different_stage_stabilities[patient_id].extend(stabilities)
+                            else:
+                                different_stage_stabilities_gap[patient_id].extend(stabilities)
+
+    # print(f"same_stage_stabilites {same_stage_stabilites}")
+    # print(f"different_stage_stabilities {different_stage_stabilities}")
+    # print(f"same_stage_stabilites_gap {same_stage_stabilites_gap}")
+    # print(f"different_stage_stabilities_gap {different_stage_stabilities_gap}")
+    path_results = os.path.join(path_results, f"cell_ass_analysis_{param.time_str}")
+    os.mkdir(path_results)
+    for patient_id in same_stage_stabilites.keys():
+        box_plot_dict = dict()
+        box_plot_dict["same+1"] = same_stage_stabilites[patient_id]
+        box_plot_dict["same+2"] = same_stage_stabilites_gap[patient_id]
+        box_plot_dict["diff+1"] = different_stage_stabilities[patient_id]
+        box_plot_dict["diff+2"] = different_stage_stabilities_gap[patient_id]
+        save_formats = ["pdf", "png"]
+        # qualitative 12 colors : http://colorbrewer2.org/?type=qualitative&scheme=Paired&n=12
+        # + 11 diverting
+
+        brewer_colors = ['#a6cee3', '#1f78b4', '#b2df8a', '#33a02c', '#fb9a99', '#e31a1c', '#fdbf6f',
+                         '#ff7f00', '#cab2d6', '#6a3d9a', '#ffff99', '#b15928', '#a50026', '#d73027',
+                         '#f46d43', '#fdae61', '#fee090', '#ffffbf', '#e0f3f8', '#abd9e9',
+                         '#74add1', '#4575b4', '#313695']
+        plot_box_plots(data_dict=box_plot_dict, title="",
+                             filename=f"{patient_id}_cell_ass_stabilities",
+                             path_results=path_results, with_scatters=True,
+                              scatter_size=200,
+                             y_label=f"stability (%)", colors=brewer_colors, param=param,
+                             save_formats=save_formats)
+
+    #  ---------------- n cells vs n repeat figures ---------------------
+    """
+    n_cells_repet_dict[patient_id][stage_to_add][highest_rate_channel][0].append(n_cells_in_ass)
+    n_cells_repet_dict[patient_id][stage_to_add][highest_rate_channel][1].append(n_repeat)
+    n_cells_repet_dict[patient_id][stage_to_add][highest_rate_channel][2].append(highest_rate)
+
+    """
+    for patient_id, stage_dict in n_cells_repet_dict.items():
+        for stage, channels_dict in stage_dict.items():
+            n_sec = int(channels_dict["count"][0])
+            n_stages = channels_dict["count"][1]
+            if n_stages == 0:
+                n_units = 0
+            else:
+                n_units = int(channels_dict["count"][2] / n_stages)
+            file_name = f"{patient_id}_cells_vs_repeat_cell_assemblies_stage_{stage}_" \
+                        f"{n_stages}_periods_{n_sec}_sec_{n_units}_units"
+            save_formats = ["pdf", "png"]
+            plot_cells_vs_repeat_ass_figure(channels_dict, path_results, file_name, save_formats)
+
+
+def plot_cells_vs_repeat_ass_figure(channels_dict, path_results, file_name, save_formats):
+    """
+
+    Args:
+        channels_dict: key channel, value: 3 lists
+        path_results:
+        file_name:
+
+    Returns:
+
+    """
+    background_color = "black"
+    labels_color = "white"
+    x_labels_rotation = None
+    y_log = False
+    y_lim = (0, 50)
+    y_label = "n repeat / min"
+    x_label = "n cells"
+
+    fig, ax1 = plt.subplots(nrows=1, ncols=1,
+                            gridspec_kw={'height_ratios': [1]},
+                            figsize=(12, 12))
+
+    ax1.set_facecolor(background_color)
+
+    fig.patch.set_facecolor(background_color)
+
+    scatter_size = 400
+    markers = ["o", "v", "s", "d", "x"]
+    index_channel = 0
+    for channel, values in channels_dict.items():
+        if channel == "count":
+            continue
+        x_pos = values[0]
+        # adding jitter
+        x_pos = [x + ((np.random.random_sample() - 0.5) * 0.25) for x in x_pos]
+        y_pos = values[1]
+        rates = values[2]
+        # from white to red, from low rate to high rate
+        brewer_colors = ['#fee5d9','#fcae91','#fb6a4a','#cb181d']
+        colors = []
+        for rate in rates:
+            if rate <= 50:
+                colors.append(brewer_colors[0])
+            elif rate <= 75:
+                colors.append(brewer_colors[1])
+            elif rate <= 99:
+                colors.append(brewer_colors[2])
+            else:
+                colors.append(brewer_colors[3])
+
+        ax1.scatter(x_pos, y_pos,
+                    color=colors,
+                    alpha=1,
+                    marker=markers[index_channel],
+                    edgecolors=background_color,
+                    label=channel,
+                    s=scatter_size, zorder=1)
+        index_channel += 1
+
+    ax1.legend(labelspacing=2)
+    ax1.set_ylabel(f"{y_label}", fontsize=30, labelpad=20)
+    if y_lim is not None:
+        ax1.set_ylim(y_lim[0], y_lim[1])
+    if x_label is not None:
+        ax1.set_xlabel(x_label, fontsize=30, labelpad=20)
+    ax1.xaxis.label.set_color(labels_color)
+    ax1.yaxis.label.set_color(labels_color)
+    if y_log:
+        ax1.set_yscale("log")
+
+    ax1.yaxis.set_tick_params(labelsize=20)
+    ax1.xaxis.set_tick_params(labelsize=20)
+    ax1.tick_params(axis='y', colors=labels_color)
+    ax1.tick_params(axis='x', colors=labels_color)
+
+    if x_labels_rotation is not None:
+        for tick in ax1.get_xticklabels():
+            tick.set_rotation(x_labels_rotation)
+
+    # padding between ticks label and  label axis
+    # ax1.tick_params(axis='both', which='major', pad=15)
+    fig.tight_layout()
+    # adjust the space between axis and the edge of the figure
+    # https://matplotlib.org/faq/howto_faq.html#move-the-edge-of-an-axes-to-make-room-for-tick-labels
+    # fig.subplots_adjust(left=0.2)
+
+    if isinstance(save_formats, str):
+        save_formats = [save_formats]
+
+    for save_format in save_formats:
+        fig.savefig(f'{path_results}/{file_name}.{save_format}',
+                    format=f"{save_format}",
+                    facecolor=fig.get_facecolor())
+    plt.close()
+
+
+def count_channels_among_microwires(microwires_list, hippocampus_as_one):
+    """
+
+    Args:
+        microwires_list: list of string. Ex: ["MU 51 RA8", "SU 51 RA8"]
+        hippocampus_as_one: if True, all parts of hippocampus are considered as one
+
+    Returns:
+
+    """
+    # n_microw = len(microwires_list)
+    counter_dict = dict()
+
+    for microwire in microwires_list:
+        unique_channels = ["EC", "AH", "MH", "PHC"]
+        for channel in unique_channels:
+            if channel in microwire:
+                counter_dict[channel] = counter_dict.get(channel, 0) + 1
+        if ("A" in microwire) and ("AH" not in microwire):
+            counter_dict["A"] = counter_dict.get("A", 0) + 1
+        if ("PH" in microwire) and ("PHC" not in microwire):
+            counter_dict["PH"] = counter_dict.get("PH", 0) + 1
+
+    if hippocampus_as_one:
+        counter_dict["H"] = 0
+        hipp_parts = ["AH", "MH", "PH"]
+        for hipp_part in hipp_parts:
+            if hipp_part in counter_dict:
+                counter_dict["H"] = counter_dict["H"] + counter_dict[hipp_part]
+                del counter_dict[hipp_part]
+        if counter_dict["H"] == 0:
+            del counter_dict["H"]
+    return counter_dict
 
 def main():
     root_path = None
@@ -2165,6 +2689,8 @@ def main():
     # root_path=/Users/pappyhammer/Documents/academique/these_inmed/bonn_assemblies/
     data_path = root_path + "one_hour_sleep/"
     path_results_raw = root_path + "results_bonn/"
+    k_mean_results_path = os.path.join(root_path, "special_results_bonn",
+                                       "kmean_by_stage_25_ms_bin_filtered_SU_and_MU")
 
     time_str = datetime.now().strftime("%Y_%m_%d.%H-%M-%S")
     path_results = path_results_raw + f"{time_str}"
@@ -2180,13 +2706,13 @@ def main():
     # ------------------------------ param section ------------------------------
     # --------------------------------------------------------------------------------
 
-    # patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
-    # patient_ids = ["034fn1", "035fn2"]
+    patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
+    # patient_ids = ["034fn1", "035fn2", "046fn2"]
     # patient_ids = ["046fn2", "052fn2"]
     # patient_ids = ["034fn1"]
     # patient_ids = ["052fn2"]
     # patient_ids = ["046fn2"]
-    patient_ids = ["035fn2"] # memory issue
+    # patient_ids = ["035fn2"] # memory issue
 
     decrease_factor = 4  # used to be 4
 
@@ -2197,8 +2723,12 @@ def main():
     # to find event threshold
     n_surrogate_activity_threshold = 500
     perc_threshold = 95
+    # means we remove the units that fire the most
+    do_filter_spike_trains = True
 
     debug_mode = False
+
+    just_do_read_kmean_results = True
 
     just_do_descriptive_stats = False
 
@@ -2215,7 +2745,6 @@ def main():
                            "time_str": time_str,
                            "with_concatenation": False,
                            "all_sleep_stages_in_order": False}
-
 
     # ##########################################################################################
     # #################################### CLUSTERING ###########################################
@@ -2238,6 +2767,11 @@ def main():
     # --------------------------------------------------------------------------------
     # ------------------------------ end param section ------------------------------
     # --------------------------------------------------------------------------------
+
+    if just_do_read_kmean_results:
+        read_kmean_results(patients_to_analyse=patient_ids, path_kmean_dir=k_mean_results_path, data_path=data_path, param=param,
+                           path_results=path_results_raw)
+        return
 
     for patient_id in patient_ids:
         print(f"patient_id {patient_id}")
@@ -2302,9 +2836,9 @@ def main():
         # put that is inside this for loop in a function
         # for stage_indice in stage_2_indices[2:]:
         for stage_indice in np.arange(len(patient.sleep_stages)):
-            # if stage_indice < 7:
-            #     continue
-            side_to_analyse = "R"
+            if stage_indice != 0:
+                continue
+            side_to_analyse = "L"
             spike_struct = patient.construct_spike_structure(sleep_stage_indices=[stage_indice],
                                                              channels_starting_by=[side_to_analyse],
                                                              spike_trains_format=True,
@@ -2320,7 +2854,6 @@ def main():
             print(f"### patient_id {patient_id}: {stage_descr}")
             print("")
 
-
             print(f"Nb units: {len(spike_struct.spike_trains)}")
             for i, train in enumerate(spike_struct.spike_trains):
                 print(f"{spike_struct.labels[i]}, nb spikes: {train.shape[0]}")
@@ -2328,7 +2861,6 @@ def main():
             # spike_struct.decrease_resolution(n=decrease_factor)
 
             # spike_nums_struct.decrease_resolution (max_time=8)
-
 
             ###################################################################
             ###################################################################
@@ -2340,7 +2872,8 @@ def main():
 
             if do_clustering:
                 k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patient,
-                                  n_surrogate_activity_threshold, perc_threshold, debug_mode)
+                                  n_surrogate_activity_threshold, perc_threshold, debug_mode,
+                                  do_filter_spike_trains)
 
             ###################################################################
             ###################################################################
