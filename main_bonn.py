@@ -2562,6 +2562,7 @@ def plot_cells_vs_repeat_ass_figure(channels_dict, path_results, file_name, save
     x_labels_rotation = None
     y_log = False
     y_lim = (0, 50)
+    x_lim = (0, 35)
     y_label = "n repeat / min"
     x_label = "n cells"
 
@@ -2610,6 +2611,8 @@ def plot_cells_vs_repeat_ass_figure(channels_dict, path_results, file_name, save
     ax1.set_ylabel(f"{y_label}", fontsize=30, labelpad=20)
     if y_lim is not None:
         ax1.set_ylim(y_lim[0], y_lim[1])
+    if x_lim is not None:
+        ax1.set_xlim(x_lim[0], x_lim[1])
     if x_label is not None:
         ax1.set_xlabel(x_label, fontsize=30, labelpad=20)
     ax1.xaxis.label.set_color(labels_color)
