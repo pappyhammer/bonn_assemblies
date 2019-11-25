@@ -2013,7 +2013,6 @@ def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patien
     sliding_window_duration = 1
 
     activity_threshold = get_sce_detection_threshold(spike_nums=spike_nums,
-
                                                      window_duration=sliding_window_duration,
                                                      use_max_of_each_surrogate=False,
                                                      spike_train_mode=False,
@@ -2186,7 +2185,7 @@ def read_kmean_cell_assembly_file(file_name):
     # list of list, each list correspond to tuples (first and last index of the SCE in frames)
     sce_times_in_cell_assemblies = []
     # for each cell, list of list, each correspond to tuples (first and last index of the SCE in frames)
-    # in which the cell is supposed to be active for the single cell assemblie to which it belongs
+    # in which the cell is supposed to be active for the single cell assembly to which it belongs
     sce_times_in_cell_assemblies_by_cell = dict()
 
     with open(file_name, "r", encoding='UTF-8') as file:
@@ -2324,7 +2323,7 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
 
         if patient_id not in patients_to_analyse:
             continue
-            
+        print(f"dir_name {dir_name}")
         print(f"patient_id {patient_id}, recording_side {recording_side}, "
               f"stage {stage}, index_stage {index_stage}, skipped {skipped}")
         if skipped or no_assembly:
@@ -2345,7 +2344,7 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
 
         info_by_index_dict[patient_id][index_stage][recording_side]["stage"] = stage
 
-        # reading the assembly files in the dire
+        # reading the assembly files in the dir
         assembly_file_name = None
         local_dir = os.path.join(path_kmean_dir, dir_name)
         for (dirpath, dirnames, local_filenames) in os.walk(local_dir):
@@ -2381,11 +2380,10 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
         duration_sec = (t_stop - t_start) / 1000
 
         print(f"## duration in sec {np.round(duration_sec, 3)}")
-
-
         cell_labels = spike_struct.labels
         do_filter_spike_trains = True
         if do_filter_spike_trains:
+            # Remove cells that fire the most
             filtered_spike_trains, filtered_cell_labels = filter_spike_trains(spike_trains,
                                                                               cell_labels,
                                                                               threshold=5,
@@ -2393,6 +2391,23 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
             spike_trains = filtered_spike_trains
             cell_labels = filtered_cell_labels
         n_cells = len(spike_trains)
+
+        neo_spike_trains = []
+        for cell in np.arange(n_cells):
+            spike_train = spike_trains[cell]
+            # print(f"n_spikes: {cell_labels[cell]}: {len(spike_train)}")
+            neo_spike_train = neo.SpikeTrain(times=spike_train, units='ms',
+                                             t_start=t_start,
+                                             t_stop=t_stop)
+            neo_spike_trains.append(neo_spike_train)
+
+        binsize = 25 * pq.ms
+        spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=binsize)
+        spike_nums = spike_trains_binned.to_bool_array().astype("int8")
+        # A list of lists for each spike train (i.e., rows of the binned matrix),
+        # that in turn contains for each spike the index into the binned matrix where this spike enters.
+        spike_indices = spike_trains_binned.spike_indices
+        # sce_times correspond to the bin index
 
         # first one is the total duration and second the number of stages periods in consideration
         stages = [stage]
@@ -2409,6 +2424,7 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
         cell_assemblies_by_microwires = list()
         for cell_assembly_index, cell_assembly in enumerate(cell_assemblies):
             n_repeat = 0
+            # keeping only assemblies in single cell assemblies
             if cell_assembly_index in sce_times_in_single_cell_assemblies:
                 n_repeat = len(sce_times_in_single_cell_assemblies[cell_assembly_index])
             print(f"Cell assembly n° {cell_assembly_index}, n repet {n_repeat}")
@@ -2451,9 +2467,19 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
             "cell_assemblies_mw"] = cell_assemblies_by_microwires
         info_by_index_dict[patient_id][index_stage][recording_side][
             "cell_assemblies_index"] = cell_assemblies
+        info_by_index_dict[patient_id][index_stage][recording_side][
+            "sce_times_in_single_cell_assemblies"] = sce_times_in_single_cell_assemblies
+        # info_by_index_dict[patient_id][index_stage][recording_side][
+        #     "spike_trains_binned"] = spike_trains_binned
+        info_by_index_dict[patient_id][index_stage][recording_side][
+            "spike_trains"] = spike_trains
+        info_by_index_dict[patient_id][index_stage][recording_side][
+            "spike_nums"] = spike_nums
+        info_by_index_dict[patient_id][index_stage][recording_side][
+            "spike_indices"] = spike_indices
         print("")
 
-    # -------- cell assemblies statbility --------
+    # -------- cell assemblies stability --------
     same_stage_stabilites = dict()
     # looking 2 stages further
     same_stage_stabilites_gap = dict()
@@ -2513,7 +2539,6 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
         save_formats = ["pdf", "png"]
         # qualitative 12 colors : http://colorbrewer2.org/?type=qualitative&scheme=Paired&n=12
         # + 11 diverting
-
         brewer_colors = ['#a6cee3', '#1f78b4', '#b2df8a', '#33a02c', '#fb9a99', '#e31a1c', '#fdbf6f',
                          '#ff7f00', '#cab2d6', '#6a3d9a', '#ffff99', '#b15928', '#a50026', '#d73027',
                          '#f46d43', '#fdae61', '#fee090', '#ffffbf', '#e0f3f8', '#abd9e9',
@@ -2546,6 +2571,332 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
             plot_cells_vs_repeat_ass_figure(channels_dict, path_results, file_name, save_formats)
 
 
+
+    # ---------------------------------------------------------------
+    # We want to build for each stage and patient a square matrix that represents the
+    # the order in which assemblies follows each other (number of count one assembly happens before another)
+    # ---------------------------------------------------------------
+    for patient_id, index_stage_dict in info_by_index_dict.items():
+        # percentages of time a assembly happens just before another one, a value for each assembly
+        same_ca_transition = []
+        same_ca_transition_delays = []
+        # max percentages of time an assembly is followed by the same other assembly, a value for each assembly
+        max_diff_ca_transition = []
+        max_diff_ca_transition_delays = []
+        for index_stage, recording_side_dict in index_stage_dict.items():
+            for recording_side, cell_ass_dict in recording_side_dict.items():
+                stage = cell_ass_dict["stage"]
+                cell_assemblies = cell_ass_dict["cell_assemblies_index"]
+                sce_times_in_single_cell_assemblies = cell_ass_dict["sce_times_in_single_cell_assemblies"]
+                # first we want to order cell assemblies by timestamps
+                sce_times_ordered = []
+                cell_assemblies_ordered = []
+                n_assemblies = len(cell_assemblies)
+                # need to have at least 2 assemblies
+                if n_assemblies < 2:
+                    continue
+                for cell_assembly_index, cell_assembly in enumerate(cell_assemblies):
+                    n_repeat = 0
+                    # keeping only assemblies in single cell assemblies
+                    if cell_assembly_index in sce_times_in_single_cell_assemblies:
+                        # keeping only first frame of the SCE
+                        # sce_times_in_single_cell_assemblies is a list of tuple of 2 int (first_bin and last_bin)
+                        sce_tuples = sce_times_in_single_cell_assemblies[cell_assembly_index]
+                        sce_first_frames = [i[0] for i in sce_tuples]
+                        sce_times_ordered.extend(sce_first_frames)
+                        cell_assemblies_ordered.extend([cell_assembly_index] * len(sce_first_frames))
+                new_order = np.argsort(sce_times_ordered)
+                sce_times_ordered = np.array(sce_times_ordered)[new_order]
+                cell_assemblies_ordered = np.array(cell_assemblies_ordered)[new_order]
+
+                # now we build the transition matrix
+                transitions = np.zeros((n_assemblies, n_assemblies), dtype="int16")
+                # contains list of delays between 2 consecutive cell assemblies activation
+                transitions_delay_dict = dict()
+                for index, assembly_number in enumerate(cell_assemblies_ordered[:-1]):
+                    transitions[assembly_number, cell_assemblies_ordered[index+1]] += 1
+                    delay = sce_times_ordered[index+1] - sce_times_ordered[index]
+                    if assembly_number not in transitions_delay_dict:
+                        transitions_delay_dict[assembly_number] = dict()
+                    if cell_assemblies_ordered[index+1] not in transitions_delay_dict[assembly_number]:
+                        transitions_delay_dict[assembly_number][cell_assemblies_ordered[index+1]] = []
+                    transitions_delay_dict[assembly_number][cell_assemblies_ordered[index + 1]].append(delay)
+
+                # then we normalized it between 0 and 100%
+                transitions_normalized = np.copy(transitions)
+                for line_index in np.arange(n_assemblies):
+                    sum_line = np.sum(transitions_normalized[line_index])
+                    if sum_line > 0:
+                        transitions_normalized[line_index] = (transitions_normalized[line_index] / sum_line) * 100
+                        same_ca_transition.append(transitions_normalized[line_index, line_index])
+                        if line_index in transitions_delay_dict:
+                            if line_index in transitions_delay_dict[line_index]:
+                                same_ca_transition_delays.extend(transitions_delay_dict[line_index][line_index])
+                        sorted_indices = np.argsort(transitions_normalized[line_index])
+                        if sorted_indices[0] == line_index:
+                            index_to_add = sorted_indices[1]
+                        else:
+                            index_to_add = sorted_indices[0]
+                        max_diff_ca_transition.append(transitions_normalized[line_index, index_to_add])
+                        if line_index in transitions_delay_dict:
+                            if index_to_add in transitions_delay_dict[line_index]:
+                                max_diff_ca_transition_delays.extend(transitions_delay_dict[line_index][index_to_add])
+                do_plot_transition_matrix=False
+                if do_plot_transition_matrix:
+                    file_name = f"{patient_id}_assemblies_transition_matrix_stage_{stage}_" \
+                                f"index_{index_stage}_side_{recording_side}"
+                    plot_transition_heatmap(heatmap_content=transitions_normalized, annot=transitions,
+                                            file_name=file_name, path_results=path_results)
+
+        save_formats = ["png"]
+        # qualitative 12 colors : http://colorbrewer2.org/?type=qualitative&scheme=Paired&n=12
+        # + 11 diverting
+        brewer_colors = ['#a6cee3', '#1f78b4', '#b2df8a', '#33a02c', '#fb9a99', '#e31a1c', '#fdbf6f',
+                         '#ff7f00', '#cab2d6', '#6a3d9a', '#ffff99', '#b15928', '#a50026', '#d73027',
+                         '#f46d43', '#fdae61', '#fee090', '#ffffbf', '#e0f3f8', '#abd9e9',
+                         '#74add1', '#4575b4', '#313695']
+        box_plot_dict = dict()
+        n_sessions_dict = dict()
+        box_plot_dict["same"] = same_ca_transition
+        n_sessions_dict["same"] = len(same_ca_transition)
+        box_plot_dict["diff"] = max_diff_ca_transition
+        n_sessions_dict["diff"] = len(max_diff_ca_transition)
+        plot_box_plots(data_dict=box_plot_dict, title="",
+                       n_sessions_dict=n_sessions_dict,
+                       filename=f"{patient_id}_cell_ass_transitions",
+                       path_results=path_results, with_scatters=True,
+                       scatter_size=200,
+                       y_label=f"Transition probability (%)", colors=brewer_colors, param=param,
+                       save_formats=save_formats)
+
+        box_plot_dict = dict()
+        n_sessions_dict = dict()
+        box_plot_dict["same"] = same_ca_transition_delays
+        n_sessions_dict["same"] = len(same_ca_transition_delays)
+        box_plot_dict["diff"] = max_diff_ca_transition_delays
+        n_sessions_dict["diff"] = len(max_diff_ca_transition_delays)
+        plot_box_plots(data_dict=box_plot_dict, title="",
+                       n_sessions_dict=n_sessions_dict,
+                       filename=f"{patient_id}_cell_ass_transition_delays",
+                       path_results=path_results, with_scatters=True,
+                       scatter_size=200,
+                       y_log=True,
+                       y_label=f"Delays (bin of 25 ms)", colors=brewer_colors, param=param,
+                       save_formats=save_formats)
+
+    # ---------------------------------------------------------------
+    # We want to measure the stability of the order of the spikes in a cell assembly
+    # ---------------------------------------------------------------
+    for patient_id, index_stage_dict in info_by_index_dict.items():
+        patient_pair_of_cells_transition_order = []
+        for index_stage, recording_side_dict in index_stage_dict.items():
+            for recording_side, cell_ass_dict in recording_side_dict.items():
+                stage = cell_ass_dict["stage"]
+                # descr = f"{patient_id}_stage_{stage}_" \
+                #             f"index_{index_stage}_side_{recording_side}"
+                # print(f"#### descr {descr}")
+                cell_assemblies = cell_ass_dict["cell_assemblies_index"]
+                # print(f'cell_ass_dict["sce_times_in_single_cell_assemblies"] {cell_ass_dict["sce_times_in_single_cell_assemblies"]}')
+                spike_nums = cell_ass_dict["spike_nums"]
+                # print(f'spike_nums.shape {spike_nums.shape}')
+                cell_assemblies_bins = cell_ass_dict["sce_times_in_single_cell_assemblies"]
+                spike_indices = cell_ass_dict["spike_indices"]
+                spike_trains = cell_ass_dict["spike_trains"]
+                n_assemblies = len(cell_assemblies)
+                # need to have at least 2 assemblies
+                # if n_assemblies < 2:
+                #     continue
+                for cell_assembly_index, cell_assembly in enumerate(cell_assemblies):
+                    # cells == units
+                    # first we want to order spikes in cell assembly by timestamps
+                    # spike_times_ordered = []
+                    # units_ordered = []
+                    n_cells_in_assembly = len(cell_assembly)
+                    if n_cells_in_assembly < 2:
+                        continue
+                    all_pairs_dict = dict()
+                    for ca_index_1 in np.arange(n_cells_in_assembly - 1):
+                        for ca_index_2 in np.arange(ca_index_1+1, n_cells_in_assembly):
+                            all_pairs_dict[(ca_index_1, ca_index_2)] = []
+
+                    # keeping only assemblies in single cell assemblies
+                    if cell_assembly_index in cell_assemblies_bins:
+                        # sce_times_in_single_cell_assemblies is a list of tuple of 2 int (first bin and last bin)
+                        bin_tuples = cell_assemblies_bins[cell_assembly_index]
+                        for bin_tuple_index, bin_tuple in enumerate(bin_tuples):
+                            # could be only one bin
+                            bins_to_explore = np.arange(bin_tuple[0], bin_tuple[1]+1)
+                            # now we want the spike times of all cell in the cell assembly that fire during those bins
+                            units_index_by_spike, spike_times = get_spike_times_in_bins(units=cell_assembly,
+                                                                                  spike_indices=spike_indices,
+                                                                                  bins_to_explore=bins_to_explore,
+                                                                                  spike_trains=spike_trains,
+                                                                                  spike_nums=spike_nums)
+                            # units_ordered.extend(units_by_spike)
+                            # spike_times_ordered.extend(spike_times)
+                            # units_index_by_spike contain the index of the units, meaning that the max value
+                            # is len(cell_assembly) - 1
+                            new_order = np.argsort(spike_times)
+                            spike_times_ordered = np.array(spike_times)[new_order]
+                            units_ordered = np.array(units_index_by_spike)[new_order]
+
+                            # now we build the transition matrix
+                            transitions = np.zeros((n_cells_in_assembly, n_cells_in_assembly), dtype="int16")
+                            # contains list of delays between 2 consecutive cell assemblies activation
+                            transitions_delay_dict = dict()
+                            for index, unit_number in enumerate(units_ordered[:-1]):
+                                transitions[unit_number, units_ordered[index + 1]] += 1
+                                delay = spike_times_ordered[index + 1] - spike_times_ordered[index]
+                                if unit_number not in transitions_delay_dict:
+                                    transitions_delay_dict[unit_number] = dict()
+                                if units_ordered[index + 1] not in transitions_delay_dict[unit_number]:
+                                    transitions_delay_dict[unit_number][units_ordered[index + 1]] = []
+                                transitions_delay_dict[unit_number][units_ordered[index + 1]].append(delay)
+
+                            # pair of units
+                            for pair_tuple in all_pairs_dict.keys():
+                                ca_1 = pair_tuple[0]
+                                ca_2 = pair_tuple[1]
+                                if (ca_1 in units_ordered) and (ca_2 in units_ordered):
+                                    # if (transitions[ca_1, ca_2] > 0) and (transitions[ca_1, ca_2] > transitions[ca_2, ca_1]):
+                                    #     all_pairs_dict[pair_tuple].append(1)
+                                    # elif (transitions[ca_2, ca_1] > 0) and (transitions[ca_2, ca_1] > transitions[ca_1, ca_2]):
+                                    #     all_pairs_dict[pair_tuple].append(2)
+                                    # else:
+                                    #     all_pairs_dict[pair_tuple].append(0)
+                                    # we look at the average time_stamps of each unit
+                                    mean_ca_1_times = np.mean(spike_times_ordered[np.where(units_ordered == ca_1)[0]])
+                                    mean_ca_2_times = np.mean(spike_times_ordered[np.where(units_ordered == ca_2)[0]])
+                                    if mean_ca_1_times <= mean_ca_2_times:
+                                        all_pairs_dict[pair_tuple].append(0)
+                                    else:
+                                        all_pairs_dict[pair_tuple].append(1)
+
+
+                            # then we normalized it between 0 and 100%
+                            transitions_normalized = np.copy(transitions)
+                            for line_index in np.arange(n_cells_in_assembly):
+                                sum_line = np.sum(transitions_normalized[line_index])
+                                if sum_line > 0:
+                                    transitions_normalized[line_index] = (transitions_normalized[line_index] / sum_line) * 100
+                                    same_ca_transition.append(transitions_normalized[line_index, line_index])
+                                    if line_index in transitions_delay_dict:
+                                        if line_index in transitions_delay_dict[line_index]:
+                                            same_ca_transition_delays.extend(transitions_delay_dict[line_index][line_index])
+                                    sorted_indices = np.argsort(transitions_normalized[line_index])
+                                    if sorted_indices[0] == line_index:
+                                        index_to_add = sorted_indices[1]
+                                    else:
+                                        index_to_add = sorted_indices[0]
+                                    max_diff_ca_transition.append(transitions_normalized[line_index, index_to_add])
+                                    if line_index in transitions_delay_dict:
+                                        if index_to_add in transitions_delay_dict[line_index]:
+                                            max_diff_ca_transition_delays.extend(transitions_delay_dict[line_index][index_to_add])
+                            do_plot_transition_matrix = False
+                            if do_plot_transition_matrix:
+                                file_name = f"{patient_id}_unit_in_ca_transition_matrix_stage_{stage}_" \
+                                            f"index_{index_stage}_side_{recording_side}_" \
+                                            f"ca_{cell_assembly_index}_bin_{bin_tuple_index}"
+                                plot_transition_heatmap(heatmap_content=transitions_normalized, annot=transitions,
+                                                        file_name=file_name, path_results=path_results)
+                        # raise Exception("TESTTT")
+                    for pair_tuple, pair_order in all_pairs_dict.items():
+                        # if a pair of cells is at least active in more than 2 activation of a cell assembly
+                        # then we count the ratio of same order of activation of this cell in the assembly
+                        if len(pair_order) > 2:
+                            pair_order = np.array(pair_order)
+                            n_0_occurences = len(np.where(pair_order == 0)[0])
+                            n_1_occurences = len(np.where(pair_order == 1)[0])
+                            max_occurence = max(n_0_occurences, n_1_occurences)
+                            ratio_activation = (max_occurence / len(pair_order)) * 100
+                            patient_pair_of_cells_transition_order.append(ratio_activation)
+        # print(f"patient_pair_of_cells_transition_order {patient_pair_of_cells_transition_order}")
+        box_plot_dict = dict()
+        n_sessions_dict = dict()
+        box_plot_dict[""] = patient_pair_of_cells_transition_order
+        plot_box_plots(data_dict=box_plot_dict, title="",
+                       # n_sessions_dict=n_sessions_dict,
+                       filename=f"{patient_id}_pair_order_in_ca",
+                       path_results=path_results, with_scatters=True,
+                       scatter_size=100,
+                       # y_log=True,
+                       y_label=f"Same order in a CA by pair (%)", colors=brewer_colors, param=param,
+                       save_formats=save_formats)
+
+def plot_transition_heatmap(heatmap_content, annot,
+                            file_name, path_results):
+    background_color = "black"
+    fig, ax = plt.subplots()
+    # fmt='d' means integers
+    ax = sns.heatmap(heatmap_content, annot=annot, fmt='d', cmap="YlGnBu", vmin=0, vmax=100)
+    fig.tight_layout()
+    # adjust the space between axis and the edge of the figure
+    # https://matplotlib.org/faq/howto_faq.html#move-the-edge-of-an-axes-to-make-room-for-tick-labels
+    # fig.subplots_adjust(left=0.2)
+    ax.set_facecolor(background_color)
+
+    labels_color = "white"
+    ax.xaxis.label.set_color(labels_color)
+    ax.yaxis.label.set_color(labels_color)
+
+    # ax.yaxis.set_tick_params(labelsize=20)
+    # ax.xaxis.set_tick_params(labelsize=20)
+    ax.tick_params(axis='y', colors=labels_color)
+    ax.tick_params(axis='x', colors=labels_color)
+
+    cbar = ax.collections[0].colorbar
+    # here set the labelsize by 20
+    cbar.ax.tick_params(colors=labels_color)
+
+    fig.patch.set_facecolor(background_color)
+    save_formats = ["png"]
+    if isinstance(save_formats, str):
+        save_formats = [save_formats]
+
+    for save_format in save_formats:
+        fig.savefig(f'{path_results}/{file_name}.{save_format}',
+                    format=f"{save_format}",
+                    facecolor=fig.get_facecolor())
+    plt.close()
+
+def get_spike_times_in_bins(units, spike_indices, bins_to_explore, spike_trains, spike_nums):
+    """
+    For each unit, get the spike times corresponding to the bins given
+    Args:
+        units: int representing the index of the unit
+        spike_indices: A list of lists for each spike train (i.e., rows of the binned matrix),
+        that in turn contains for each spike the index into the binned matrix where this spike enters.
+        bins_to_explore: array of int representing the bin to explore
+        spike_trains: list of lists for eacg spike train, containing the timestamps of spikes (non binned)
+        spike_nums: is the bin version, n_units*n_bins, contains one if the cell is active in the bin
+
+    Returns: a list of units and spike times, of the same lengths, the units indices corresponding to the spike times
+
+    """
+    units_index_by_spike = []
+    spike_times = []
+
+    # print(f"get_spike_times_in_bins")
+    # print(f"bins_to_explore {bins_to_explore}")
+    #
+    # print(f"len spike_indices {len(spike_indices)}")
+
+    for bin_number in bins_to_explore:
+        # print(f"bin_number {bin_number}")
+        for unit_index, unit_id in enumerate(units):
+            # print(f"unit_index {unit_index}, unit_id {unit_id}")
+            # print(f"spike_nums[unit_id][bin_number] {spike_nums[unit_id][bin_number]}")
+            unit_spike_indices = spike_indices[unit_id]
+            # print(f"unit_spike_indices {unit_spike_indices}")
+            spikes_in_bin = np.where(unit_spike_indices == bin_number)[0]
+            if len(spikes_in_bin) > 0:
+                # print(f"spikes_in_bin {spikes_in_bin}")
+                for spike_in_bin in spikes_in_bin:
+                    spike_times.append(spike_trains[unit_id][spike_in_bin])
+                    units_index_by_spike.append(unit_index)
+
+    return units_index_by_spike, spike_times
+
 def plot_cells_vs_repeat_ass_figure(channels_dict, path_results, file_name, save_formats):
     """
 
@@ -2562,7 +2913,7 @@ def plot_cells_vs_repeat_ass_figure(channels_dict, path_results, file_name, save
     x_labels_rotation = None
     y_log = False
     y_lim = (0, 50)
-    x_lim = (0, 35)
+    x_lim = (0, 20)
     y_label = "n repeat / min"
     x_label = "n cells"
 
@@ -2715,11 +3066,11 @@ def main():
     # patient_ids = ["034fn1"]
     # patient_ids = ["052fn2"]
     # patient_ids = ["046fn2"]
-    # patient_ids = ["035fn2"] # memory issue
+    patient_ids = ["035fn2"] # memory issue
 
-    decrease_factor = 4  # used to be 4
+    # decrease_factor = 4  # used to be 4
 
-    sliding_window_duration_in_ms = 25  # 250
+    # sliding_window_duration_in_ms = 25  # 250
     keeping_only_SU = False
     # 100 ms sliding window
 
@@ -2839,6 +3190,7 @@ def main():
         # put that is inside this for loop in a function
         # for stage_indice in stage_2_indices[2:]:
         for stage_indice in np.arange(len(patient.sleep_stages)):
+            # temporary just to analyse the stage index 0
             if stage_indice != 0:
                 continue
             side_to_analyse = "L"
