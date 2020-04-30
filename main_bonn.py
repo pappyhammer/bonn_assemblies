@@ -5,6 +5,7 @@ import seaborn as sns
 import numpy as np
 import hdf5storage
 from datetime import datetime
+import pandas as pd
 import os
 # to add homemade package, go to preferences, then project interpreter, then click on the wheel symbol
 # then show all, then select the interpreter and lick on the more right icon to display a list of folder and
@@ -80,9 +81,26 @@ class SleepStage:
 
 class SpikeStructure:
 
-    def __init__(self, patient, spike_nums, spike_trains, microwire_labels, cluster_labels, activity_threshold=None,
+    def __init__(self, patient, spike_nums, spike_trains, microwire_labels, cluster_labels, cluster_indices,
+                 activity_threshold=None,
                  title=None, ordered_indices=None, ordered_spike_data=None,
                  one_sec=10 ** 6):
+        """
+
+        Args:
+            patient:
+            spike_nums:
+            spike_trains:
+            microwire_labels:
+            cluster_labels:
+            cluster_indices: indicate what is the index of the units among the clusters (indexing starts at 0)
+            activity_threshold:
+            title:
+            ordered_indices:
+            ordered_spike_data:
+            one_sec:
+        """
+
         self.patient = patient
         self.spike_nums = spike_nums
         self.spike_trains = spike_trains
@@ -91,6 +109,7 @@ class SpikeStructure:
         self.microwire_labels = np.array(microwire_labels)
         # array of int
         self.cluster_labels = np.array(cluster_labels)
+        self.cluster_indices = np.array(cluster_indices)
         self.activity_threshold = activity_threshold
         self.title = title
         self.labels = self.get_labels()
@@ -1110,9 +1129,9 @@ class BonnPatient:
         result_channels = []
         for channel in channels_starting_by:
             result_indices.extend([i for i, ch in enumerate(self.channel_info_by_microwire)
-                                   if ch.startswith(channel)])
+                                   if isinstance(ch, str) and ch.startswith(channel)])
             result_channels.extend([ch for ch in self.channel_info_by_microwire
-                                    if ch.startswith(channel)])
+                                    if isinstance(ch, str) and ch.startswith(channel)])
         return result_indices, result_channels
 
     def select_channels_with_exact_same_name_without_number(self, channels):
@@ -1520,6 +1539,8 @@ class BonnPatient:
             # used to labels the ticks
             micro_wire_labels = []
             cluster_labels = []
+            # cluster_indices: indicate what is the index of the units among the clusters (indexing starts at 0)
+            cluster_indices = []
             for i, micro_wire in enumerate(micro_wire_to_keep):
                 for unit_cluster_index in self.spikes_time_by_microwire[micro_wire].keys():
                     cluster_infos = self.cluster_info[micro_wire][0]
@@ -1533,6 +1554,7 @@ class BonnPatient:
                                 continue
                     micro_wire_labels.append(micro_wire)
                     cluster_labels.append(cluster)
+                    cluster_indices.append(unit_cluster_index)
 
             # 1 = MU  2 = SU -1 = Artif.
             # 0 = Unassigned (is ignored)
@@ -1548,6 +1570,7 @@ class BonnPatient:
             spike_struct = SpikeStructure(patient=self, spike_trains=spike_trains, spike_nums=spike_nums,
                                           microwire_labels=micro_wire_labels,
                                           cluster_labels=cluster_labels,
+                                          cluster_indices=cluster_indices,
                                           title=title)
             spike_struct_list.append(spike_struct)
         # print(f"End of construct_spike_structure for {self.patient_id}")
@@ -1711,6 +1734,7 @@ class BonnPatient:
                 for micro_wire, units_time_stamps_dict in micro_wires_spikes_time_stamps.items():
                     for units_cluster_index, time_stamps in units_time_stamps_dict.items():
                         cluster_infos = self.cluster_info[micro_wire][0]
+                        # print(f"/// cluster_infos {cluster_infos}")
                         cluster = cluster_infos[units_cluster_index]
                         # to change
                         if only_SU_and_MU:
@@ -1771,6 +1795,8 @@ class BonnPatient:
         # used to labels the ticks
         micro_wire_labels = []
         cluster_labels = []
+        # cluster_indices indicate what is the index of the units among the clusters (indexing starts at 0)
+        cluster_indices = []
         for i, micro_wire in enumerate(micro_wire_to_keep):
             for unit_cluster_index in self.spikes_time_by_microwire[micro_wire].keys():
                 cluster_infos = self.cluster_info[micro_wire][0]
@@ -1784,6 +1810,7 @@ class BonnPatient:
                             continue
                 micro_wire_labels.append(micro_wire)
                 cluster_labels.append(cluster)
+                cluster_indices.append(unit_cluster_index)
 
         # 1 = MU  2 = SU -1 = Artif.
         # 0 = Unassigned (is ignored)
@@ -1799,7 +1826,7 @@ class BonnPatient:
         spike_struct = SpikeStructure(patient=self, spike_trains=spike_trains, spike_nums=spike_nums,
                                       microwire_labels=micro_wire_labels,
                                       cluster_labels=cluster_labels,
-                                      title=title)
+                                      title=title, cluster_indices=cluster_indices)
         # print(f"End of construct_spike_structure for {self.patient_id}")
         return spike_struct  # spike_nums, micro_wire_to_keep, channels_to_keep, labels
 
@@ -1906,7 +1933,7 @@ def create_spike_train_neo_format(spike_struct):
     return spike_trains, t_start, t_stop
 
 
-def filter_spike_trains(spike_trains, cell_labels, threshold, duration_sec):
+def filter_spike_trains(spike_trains, cell_labels, cluster_indices, threshold, duration_sec):
     """
     Remove cells that fire the most
     Args:
@@ -1919,6 +1946,7 @@ def filter_spike_trains(spike_trains, cell_labels, threshold, duration_sec):
     print(f"n cells before filtering: {len(spike_trains)}: ")
     filtered_spike_trains = []
     filtered_cell_labels = []
+    filtered_cluster_indices = []
     for cell in np.arange(len(spike_trains)):
         spike_train = spike_trains[cell]
         n_spike_normalized = len(spike_train) / duration_sec
@@ -1926,9 +1954,10 @@ def filter_spike_trains(spike_trains, cell_labels, threshold, duration_sec):
         if n_spike_normalized <= threshold:
             filtered_spike_trains.append(spike_train)
             filtered_cell_labels.append(cell_labels[cell])
+            filtered_cluster_indices.append(cluster_indices[cell])
 
     print(f"n cells after filtering: {len(filtered_spike_trains)}")
-    return filtered_spike_trains, filtered_cell_labels
+    return filtered_spike_trains, filtered_cell_labels, filtered_cluster_indices
 
 
 def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patient,
@@ -1968,8 +1997,10 @@ def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patien
     cell_labels = spike_struct.labels
 
     if do_filter_spike_trains:
-        filtered_spike_trains, filtered_cell_labels = filter_spike_trains(spike_trains,
-                                                                          cell_labels, threshold=5,
+        filtered_spike_trains, filtered_cell_labels, _ = filter_spike_trains(spike_trains,
+                                                                          cell_labels,
+                                                                          cluster_indices=cell_labels,
+                                                                          threshold=5,
                                                                           duration_sec=duration_sec)
         spike_trains = filtered_spike_trains
         cell_labels = filtered_cell_labels
@@ -2176,7 +2207,7 @@ def k_mean_clustering(stage_descr, param, path_results_raw, spike_struct, patien
                                                        with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
 
 def read_kmean_cell_assembly_file(file_name):
-    # list of list, each list correspond to one cell assemblie
+    # list of list, each list correspond to one cell assembly
     cell_assemblies = []
     # key is the CA index, eachkey is a list correspond to tuples
     # (first and last index of the SCE in frames)
@@ -2271,7 +2302,56 @@ def get_stability_among_cell_assemblies(assemblies_1, assemblies_2):
         perc_list.append(max_perc)
     return perc_list
 
-def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_results, param):
+
+def find_unit_response(df, patient_id, channel, cluster_num, hemisphere, region, wire):
+    """
+
+    Args:
+        df: panda dataframe to explore
+        patient_id:
+        channel:
+        cluster_num:
+        hemisphere:
+        region:
+        wire:
+
+    Returns:
+
+    """
+
+    df_response = df.loc[(df['Patient'] == patient_id) & (df['Channel'] == channel) &
+                         (df['Cluster'] == cluster_num) & (df['Hemisphere'] == hemisphere) &
+                         (df['Region'] == region) & (df['Wire'] == wire)]
+    if len(df_response) > 0:
+        preferred_stim_num_e = df_response.loc[df_response.index[0], 'preferred_stim_num_e']
+        preferred_stim_num_m = df_response.loc[df_response.index[0], 'preferred_stim_num_m']
+
+        return True, preferred_stim_num_e, preferred_stim_num_m
+    return False, -1, -1
+
+
+def find_number_of_units(df, patient_id, hemisphere):
+    """
+
+    Args:
+        df: panda dataframe to explore
+        patient_id:
+        channel:
+        cluster_num:
+        hemisphere:
+        region:
+        wire:
+
+    Returns:
+
+    """
+
+    df_response = df.loc[(df['Patient'] == patient_id) & (df['Hemisphere'] == hemisphere)]
+
+    return len(df_response)
+
+def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_results, param, responsive_units_file,
+                       invariant_units_file):
     data_dict = dict()
 
     # look for filenames in the fisrst directory, if we don't break, it will go through all directories
@@ -2283,6 +2363,10 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
     if len(data_dict) == 0:
         print("read_kmean_results no directories")
         return
+
+    responsive_units_df = pd.read_csv(responsive_units_file)
+
+    invariant_units_df = pd.read_csv(invariant_units_file)
 
     patients_dict = dict()
 
@@ -2308,6 +2392,23 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
         else:
             index_stage = int(index_stage)
         return patient_id, recording_side, stage, index_stage, skipped, no_assembly
+
+    def extract_chanel_wire_region_info(data_str):
+        """
+        Extract info
+        ex: MU 45 RA6 return channel 45, microwire 6 and region 'RA'
+        Args:
+            data_str:
+
+        Returns:
+
+        """
+        split_str = data_str.split()
+        channel = int(split_str[1])
+        microwire = int(split_str[2][-1])
+        region = split_str[2][:-1]
+        return channel, microwire, region
+
 
     info_by_index_dict = dict()
     # first key is the patient
@@ -2381,15 +2482,20 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
 
         print(f"## duration in sec {np.round(duration_sec, 3)}")
         cell_labels = spike_struct.labels
+        # indicate what is the index of the units among the clusters (indexing starts at 0)
+        cluster_indices = spike_struct.cluster_indices
         do_filter_spike_trains = True
         if do_filter_spike_trains:
             # Remove cells that fire the most
-            filtered_spike_trains, filtered_cell_labels = filter_spike_trains(spike_trains,
-                                                                              cell_labels,
-                                                                              threshold=5,
-                                                                              duration_sec=duration_sec)
+            filtered_spike_trains, filtered_cell_labels, \
+            filtered_cluster_indices = filter_spike_trains(spike_trains,
+                                                           cell_labels,
+                                                           cluster_indices=cluster_indices,
+                                                           threshold=5,
+                                                           duration_sec=duration_sec)
             spike_trains = filtered_spike_trains
             cell_labels = filtered_cell_labels
+            cluster_indices = filtered_cluster_indices
         n_cells = len(spike_trains)
 
         neo_spike_trains = []
@@ -2422,6 +2528,8 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                 n_cells_repet_dict[patient_id][stage_to_add]["count"][2] + n_cells
 
         cell_assemblies_by_microwires = list()
+        # list of int, indicating the cluster index of the unit
+        cell_assemblies_by_cluster_index = list()
         for cell_assembly_index, cell_assembly in enumerate(cell_assemblies):
             n_repeat = 0
             # keeping only assemblies in single cell assemblies
@@ -2430,11 +2538,15 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
             print(f"Cell assembly n° {cell_assembly_index}, n repet {n_repeat}")
             cells_str = ""
             microwires_list = []
+            tmp_cluster_indices_list = []
             for cell in cell_assembly:
                 microwires_list.append(cell_labels[cell])
+                tmp_cluster_indices_list.append(cluster_indices[cell])
                 cells_str = cells_str + f"{cell_labels[cell]} - "
             cells_str = cells_str[:-3]
             cell_assemblies_by_microwires.append(microwires_list)
+            # TODO: use this list to identify responsive units
+            cell_assemblies_by_cluster_index.append(tmp_cluster_indices_list)
             counter_dict = count_channels_among_microwires(microwires_list=microwires_list,
                                                            hippocampus_as_one=True)
             print(f"{cells_str}")
@@ -2465,6 +2577,8 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
 
         info_by_index_dict[patient_id][index_stage][recording_side][
             "cell_assemblies_mw"] = cell_assemblies_by_microwires
+        info_by_index_dict[patient_id][index_stage][recording_side][
+            "cell_assemblies_cluster_index"] = cell_assemblies_by_cluster_index
         info_by_index_dict[patient_id][index_stage][recording_side][
             "cell_assemblies_index"] = cell_assemblies
         info_by_index_dict[patient_id][index_stage][recording_side][
@@ -2570,7 +2684,95 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
             save_formats = ["pdf", "png"]
             plot_cells_vs_repeat_ass_figure(channels_dict, path_results, file_name, save_formats)
 
+    # ---------------------------------------------------------------
+    # Responsive and invariant units among cell assemblies
+    # ---------------------------------------------------------------
+    for patient_id, index_stage_dict in info_by_index_dict.items():
+        for index_stage, recording_side_dict in index_stage_dict.items():
+            for recording_side, cell_ass_dict in recording_side_dict.items():
+                stage = cell_ass_dict["stage"]
+                # list of list, each list correspond to one cell assembly
+                cell_assemblies = cell_ass_dict["cell_assemblies_index"]
+                sce_times_in_single_cell_assemblies = cell_ass_dict["sce_times_in_single_cell_assemblies"]
+                cell_assemblies_by_microwires = cell_ass_dict["cell_assemblies_mw"]
+                cell_assemblies_by_cluster_index = cell_ass_dict["cell_assemblies_cluster_index"]
+                spike_trains = cell_ass_dict["spike_trains"]
+                n_units = len(spike_trains)
 
+                n_assemblies = len(cell_assemblies)
+                # need to have at least 2 assemblies
+                if n_assemblies < 2:
+                    continue
+
+                n_responsive_units_total = find_number_of_units(df=responsive_units_df,
+                                                          patient_id=int(patient_id[1:3]),
+                                                          hemisphere=recording_side)
+
+                n_invariant_units_total = find_number_of_units(df=invariant_units_df,
+                                                          patient_id=int(patient_id[1:3]),
+                                                          hemisphere=recording_side)
+                print(f"## For patient {patient_id} on {recording_side} hemisphere  stage {stage} index {index_stage}, "
+                      f"Among {n_units} units: "
+                      f"{n_responsive_units_total} R, {n_invariant_units_total} I")
+
+                for cell_assembly_index, cell_assembly in enumerate(cell_assemblies):
+                    # probability of the cell assembly composition given the type of units
+                    cell_ass_prob = 1
+                    # number of repetition
+                    if cell_assembly_index in sce_times_in_single_cell_assemblies:
+                        ass_n_rep = len(sce_times_in_single_cell_assemblies[cell_assembly_index])
+                    else:
+                        ass_n_rep = 0
+                    for cell_index_in_ass, cell in enumerate(cell_assembly):
+                        # ex SU 41 RA2
+                        unit_descr = cell_assemblies_by_microwires[cell_assembly_index][cell_index_in_ass]
+                        cluster_num = cell_assemblies_by_cluster_index[cell_assembly_index][cell_index_in_ass]
+                        is_responsive = False
+                        # preferred stim if is_responsive
+                        resp_stim_num_e = -1
+                        resp_stim_num_m = -1
+                        is_invariant = False
+                        inv_stim_num_e = -1
+                        inv_stim_num_m = -1
+                        channel, microwire, region = extract_chanel_wire_region_info(unit_descr)
+                        # adding +1 due to matlab indexing system
+                        is_responsive, resp_stim_num_e, \
+                        resp_stim_num_m = find_unit_response(df=responsive_units_df,
+                                                             patient_id=int(patient_id[1:3]),
+                                                             channel=channel + 1, cluster_num=cluster_num,
+                                                             hemisphere=recording_side,
+                                                             region=region[1:], wire=microwire)
+
+                        is_invariant, inv_stim_num_e, \
+                        inv_stim_num_m = find_unit_response(df=invariant_units_df,
+                                                            patient_id=int(patient_id[1:3]),
+                                                            channel=channel + 1, cluster_num=cluster_num,
+                                                            hemisphere=recording_side,
+                                                            region=region[1:], wire=microwire)
+                        if is_invariant:
+                            cell_ass_prob *= (n_invariant_units_total / n_units)
+                        elif is_responsive:
+                            cell_ass_prob *= (n_responsive_units_total / n_units)
+                        else:
+                            cell_ass_prob *= ((n_units - n_responsive_units_total) / n_units)
+
+                        extra_info_str = ""
+                        if is_responsive:
+                            extra_info_str = extra_info_str + f" (R+, e {resp_stim_num_e}, m {resp_stim_num_m})"
+                        else:
+                            extra_info_str = extra_info_str + f" (R-)"
+                        if is_invariant:
+                            extra_info_str = extra_info_str + f", (I+, e {inv_stim_num_e}, m {inv_stim_num_m})"
+                        else:
+                            extra_info_str = extra_info_str + f", (I-)"
+                        print(f"{patient_id} side {recording_side} stage {stage} index {index_stage} "
+                              f"cell ass {cell_assembly_index} cluster {cluster_num}, "
+                              f"{unit_descr}: "
+                              f"{extra_info_str}")
+                        # TODO add responsiveness
+                    print(f"N rep: {ass_n_rep}")
+                    print(f"Assembly probability: {np.round(cell_ass_prob, 3)}")
+                    print(" ")
 
     # ---------------------------------------------------------------
     # We want to build for each stage and patient a square matrix that represents the
@@ -3060,13 +3262,23 @@ def main():
     # ------------------------------ param section ------------------------------
     # --------------------------------------------------------------------------------
 
-    patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
+    # all patients
+    # patient_ids = ["028fn1", "034fn1", "035fn2", "037fn2", "046fn2", "052fn2"]
+    # old patients
+    # patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
+    # new patients
+    # patient_ids = ["028fn1", "037fn2"]
+    patient_ids = ["028fn1"]
+
     # patient_ids = ["034fn1", "035fn2", "046fn2"]
-    # patient_ids = ["046fn2", "052fn2"]
+
+    # patient_ids = ["046fn2", "052fn2", "028fn1"]
+    # patient_ids = ["034fn1", "035fn2", "037fn2"]
+
     # patient_ids = ["034fn1"]
     # patient_ids = ["052fn2"]
     # patient_ids = ["046fn2"]
-    patient_ids = ["035fn2"] # memory issue
+    # patient_ids = ["035fn2"] # memory issue
 
     # decrease_factor = 4  # used to be 4
 
@@ -3123,11 +3335,18 @@ def main():
     # --------------------------------------------------------------------------------
 
     if just_do_read_kmean_results:
-        read_kmean_results(patients_to_analyse=patient_ids, path_kmean_dir=k_mean_results_path, data_path=data_path, param=param,
-                           path_results=path_results_raw)
+        responsive_units_file = os.path.join(root_path, "one_hour_sleep", "info", "responsive_units_cut.csv")
+        invariant_units_file = os.path.join(root_path, "one_hour_sleep", "info", "invariant_units_cut.csv")
+        read_kmean_results(patients_to_analyse=patient_ids, path_kmean_dir=k_mean_results_path, data_path=data_path,
+                           param=param,
+                           path_results=path_results_raw, responsive_units_file=responsive_units_file,
+                           invariant_units_file=invariant_units_file)
         return
 
     for patient_id in patient_ids:
+        print("")
+        print("*" * 150)
+        print("")
         print(f"patient_id {patient_id}")
         patient = BonnPatient(data_path=data_path, patient_id=patient_id, param=param)
         # patient.print_sleep_stages_info()
@@ -3191,9 +3410,9 @@ def main():
         # for stage_indice in stage_2_indices[2:]:
         for stage_indice in np.arange(len(patient.sleep_stages)):
             # temporary just to analyse the stage index 0
-            if stage_indice != 0:
-                continue
-            side_to_analyse = "L"
+            # if stage_indice != 0:
+            #     continue
+            side_to_analyse = "R"
             spike_struct = patient.construct_spike_structure(sleep_stage_indices=[stage_indice],
                                                              channels_starting_by=[side_to_analyse],
                                                              spike_trains_format=True,
