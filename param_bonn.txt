@@ -1,1 +1,1 @@
-root_path=/Users/pappyhammer/Documents/academique/these_inmed/bonn_assemblies/
+root_path=/media/julien/Not_today/bonn_assemblies/

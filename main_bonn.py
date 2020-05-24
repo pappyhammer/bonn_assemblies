@@ -33,8 +33,9 @@ import neo
 import quantities as pq
 import elephant.conversion as elephant_conv
 from elephant.spike_train_correlation import corrcoef
+from scipy.special import comb
 # import elephant.cell_assembly_detection as cad
-from cell_assembly_detection import cell_assembly_detection
+# from cell_assembly_detection import cell_assembly_detection
 
 
 # TODO: see to use scipy.sparse in the future
@@ -2688,6 +2689,9 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
     # Responsive and invariant units among cell assemblies
     # ---------------------------------------------------------------
     for patient_id, index_stage_dict in info_by_index_dict.items():
+        # list of list of 3 elements (n_cells_in_assembly, n_responsive_units_in, probability)
+        # as many elements as assemblie
+        probabilities_data = {"R": [], "L": []}
         for index_stage, recording_side_dict in index_stage_dict.items():
             for recording_side, cell_ass_dict in recording_side_dict.items():
                 stage = cell_ass_dict["stage"]
@@ -2715,33 +2719,32 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                       f"Among {n_units} units: "
                       f"{n_responsive_units_total} R, {n_invariant_units_total} I")
 
+
                 for cell_assembly_index, cell_assembly in enumerate(cell_assemblies):
-                    # probability of the cell assembly composition given the type of units
-                    cell_ass_prob = 1
                     # number of repetition
                     if cell_assembly_index in sce_times_in_single_cell_assemblies:
                         ass_n_rep = len(sce_times_in_single_cell_assemblies[cell_assembly_index])
                     else:
                         ass_n_rep = 0
+                    n_responsive_units_in_ass = 0
+                    print("")
+                    print( f"// Cell ass {cell_assembly_index}")
                     for cell_index_in_ass, cell in enumerate(cell_assembly):
                         # ex SU 41 RA2
                         unit_descr = cell_assemblies_by_microwires[cell_assembly_index][cell_index_in_ass]
                         cluster_num = cell_assemblies_by_cluster_index[cell_assembly_index][cell_index_in_ass]
-                        is_responsive = False
-                        # preferred stim if is_responsive
-                        resp_stim_num_e = -1
-                        resp_stim_num_m = -1
-                        is_invariant = False
-                        inv_stim_num_e = -1
-                        inv_stim_num_m = -1
+
                         channel, microwire, region = extract_chanel_wire_region_info(unit_descr)
                         # adding +1 due to matlab indexing system
+                        # preferred stim if is_responsive
                         is_responsive, resp_stim_num_e, \
                         resp_stim_num_m = find_unit_response(df=responsive_units_df,
                                                              patient_id=int(patient_id[1:3]),
                                                              channel=channel + 1, cluster_num=cluster_num,
                                                              hemisphere=recording_side,
                                                              region=region[1:], wire=microwire)
+                        if is_responsive:
+                            n_responsive_units_in_ass += 1
 
                         is_invariant, inv_stim_num_e, \
                         inv_stim_num_m = find_unit_response(df=invariant_units_df,
@@ -2749,12 +2752,13 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                                                             channel=channel + 1, cluster_num=cluster_num,
                                                             hemisphere=recording_side,
                                                             region=region[1:], wire=microwire)
-                        if is_invariant:
-                            cell_ass_prob *= (n_invariant_units_total / n_units)
-                        elif is_responsive:
-                            cell_ass_prob *= (n_responsive_units_total / n_units)
-                        else:
-                            cell_ass_prob *= ((n_units - n_responsive_units_total) / n_units)
+
+                        # if is_invariant:
+                        #     cell_ass_prob *= (n_invariant_units_total / n_units)
+                        # elif is_responsive:
+                        #     cell_ass_prob *= (n_responsive_units_total / n_units)
+                        # else:
+                        #     cell_ass_prob *= ((n_units - n_responsive_units_total) / n_units)
 
                         extra_info_str = ""
                         if is_responsive:
@@ -2765,14 +2769,32 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                             extra_info_str = extra_info_str + f", (I+, e {inv_stim_num_e}, m {inv_stim_num_m})"
                         else:
                             extra_info_str = extra_info_str + f", (I-)"
-                        print(f"{patient_id} side {recording_side} stage {stage} index {index_stage} "
-                              f"cell ass {cell_assembly_index} cluster {cluster_num}, "
+                        print(f"Cluster {cluster_num}, "
                               f"{unit_descr}: "
                               f"{extra_info_str}")
-                        # TODO add responsiveness
+                    # probability of the cell assembly composition given the type of units
+                    cell_ass_prob = 1
+                    # comb(10, 3, exact=True)
+                    # (n parmi responsive) * (taille assemblée - n parmi non responsive) / (taille de l'assemblée parmi total)
+                    cell_ass_prob = (comb(n_responsive_units_total, n_responsive_units_in_ass) *
+                                     comb((n_units - n_responsive_units_total),
+                                          (len(cell_assembly) - n_responsive_units_in_ass))) / comb(n_units,
+                                                                                                    len(cell_assembly))
+                    print(f"cell_ass_prob {cell_ass_prob}")
+                    probabilities_data[recording_side].append([len(cell_assembly), n_responsive_units_in_ass,
+                                                               cell_ass_prob])
                     print(f"N rep: {ass_n_rep}")
-                    print(f"Assembly probability: {np.round(cell_ass_prob, 3)}")
+                    print(f"Assembly probability: {np.round(cell_ass_prob, 4)}")
                     print(" ")
+                    # TODO: boxplots of the probabilities ?
+                    #  change probability so it reflects the probability to have that many responsive units
+                    #  regarding the size of the assembly and the number of units in total
+        # plotting scatter for each patient, n_cells_in_assembly vs n_responsive_units in assembly
+        for hemisphere, prob_data in probabilities_data.items():
+            plot_responsive_units_in_assembly_scatter(patient_id=patient_id + f"_{hemisphere}",
+                                                      probabilities_data=prob_data,
+                                                      path_results=path_results, save_formats=save_formats)
+
 
     # ---------------------------------------------------------------
     # We want to build for each stage and patient a square matrix that represents the
@@ -3199,6 +3221,109 @@ def plot_cells_vs_repeat_ass_figure(channels_dict, path_results, file_name, save
     plt.close()
 
 
+def plot_responsive_units_in_assembly_scatter(patient_id, probabilities_data, path_results, save_formats):
+    """
+
+    Args:
+        patient_id: str
+        probabilities_data: list of list of 3 elements (n_cells, n_resp, proba)
+        path_results:
+        save_formats:
+
+    Returns:
+
+    """
+    background_color = "black"
+    labels_color = "white"
+    x_labels_rotation = None
+    y_log = False
+    y_lim = [-1, 1]
+    x_lim = [0, 1]
+    y_label = "n responsives units"
+    x_label = "n units in assembly"
+
+    fig, ax1 = plt.subplots(nrows=1, ncols=1,
+                            gridspec_kw={'height_ratios': [1]},
+                            figsize=(12, 12))
+
+    ax1.set_facecolor(background_color)
+
+    fig.patch.set_facecolor(background_color)
+
+    scatter_size = 400
+    markers = ["o", "v", "s", "d", "x"]
+    index_channel = 0
+    for prob_data in probabilities_data:
+        n_units = prob_data[0]
+        n_resp_units = prob_data[1]
+        prob = prob_data[2]
+        if n_units >= x_lim[1]:
+            x_lim[1] = n_units + 1
+        if n_resp_units >= y_lim[1]:
+            y_lim[1] = n_resp_units + 1
+        x_pos = n_units
+        # adding jitter
+        x_pos = x_pos + ((np.random.random_sample() - 0.5) * 0.5)
+        y_pos = n_resp_units
+        y_pos = y_pos + ((np.random.random_sample() - 0.5) * 0.25)
+        # from red to white, from low p_value to high p_value
+        brewer_colors = ['#cb181d', '#fb6a4a', '#fcae91', '#fee5d9']
+        colors = []
+        if prob <= 0.01:
+            colors.append(brewer_colors[0])
+        elif prob <= 0.05:
+            colors.append(brewer_colors[1])
+        elif prob <= 0.1:
+            colors.append(brewer_colors[2])
+        else:
+            colors.append(brewer_colors[3])
+
+        ax1.scatter(x_pos, y_pos,
+                    color=colors,
+                    alpha=0.8,
+                    marker="o",
+                    edgecolors=background_color,
+                    s=scatter_size, zorder=1)
+        index_channel += 1
+
+    # ax1.legend(labelspacing=2)
+    ax1.set_ylabel(f"{y_label}", fontsize=30, labelpad=20)
+    if y_lim is not None:
+        ax1.set_ylim(y_lim[0], y_lim[1])
+    if x_lim is not None:
+        ax1.set_xlim(x_lim[0], x_lim[1])
+    if x_label is not None:
+        ax1.set_xlabel(x_label, fontsize=30, labelpad=20)
+    ax1.xaxis.label.set_color(labels_color)
+    ax1.yaxis.label.set_color(labels_color)
+    if y_log:
+        ax1.set_yscale("log")
+
+    ax1.yaxis.set_tick_params(labelsize=20)
+    ax1.xaxis.set_tick_params(labelsize=20)
+    ax1.tick_params(axis='y', colors=labels_color)
+    ax1.tick_params(axis='x', colors=labels_color)
+
+    if x_labels_rotation is not None:
+        for tick in ax1.get_xticklabels():
+            tick.set_rotation(x_labels_rotation)
+
+    # padding between ticks label and  label axis
+    # ax1.tick_params(axis='both', which='major', pad=15)
+    fig.tight_layout()
+    # adjust the space between axis and the edge of the figure
+    # https://matplotlib.org/faq/howto_faq.html#move-the-edge-of-an-axes-to-make-room-for-tick-labels
+    # fig.subplots_adjust(left=0.2)
+
+    if isinstance(save_formats, str):
+        save_formats = [save_formats]
+
+    for save_format in save_formats:
+        fig.savefig(f'{path_results}/{patient_id}_responsive_unis_in_assemblies.{save_format}',
+                    format=f"{save_format}",
+                    facecolor=fig.get_facecolor())
+    plt.close()
+
 def count_channels_among_microwires(microwires_list, hippocampus_as_one):
     """
 
@@ -3263,22 +3388,29 @@ def main():
     # --------------------------------------------------------------------------------
 
     # all patients
-    # patient_ids = ["028fn1", "034fn1", "035fn2", "037fn2", "046fn2", "052fn2"]
+    patient_ids = ["028fn1", "034fn1", "035fn2", "037fn2", "046fn2", "052fn2"]
     # old patients
     # patient_ids = ["034fn1", "035fn2", "046fn2", "052fn2"]
     # new patients
     # patient_ids = ["028fn1", "037fn2"]
-    patient_ids = ["028fn1"]
+    # patient_ids = ["028fn1"]
+    # patient_ids = ["037fn2"]
 
     # patient_ids = ["034fn1", "035fn2", "046fn2"]
 
     # patient_ids = ["046fn2", "052fn2", "028fn1"]
     # patient_ids = ["034fn1", "035fn2", "037fn2"]
 
-    # patient_ids = ["034fn1"]
+    patient_ids = ["034fn1"]
     # patient_ids = ["052fn2"]
     # patient_ids = ["046fn2"]
     # patient_ids = ["035fn2"] # memory issue
+    patient_ids = ["028fn1", "034fn1", "035fn2", "046fn2", "052fn2"]
+
+    # best responsive units
+    # patient_ids = ["046fn2", "052fn2", "028fn1"]
+    # patient_ids = ["035fn2"]
+    # patient_ids = ["046fn2"]
 
     # decrease_factor = 4  # used to be 4
 
@@ -3410,7 +3542,7 @@ def main():
         # for stage_indice in stage_2_indices[2:]:
         for stage_indice in np.arange(len(patient.sleep_stages)):
             # temporary just to analyse the stage index 0
-            # if stage_indice != 0:
+            # if stage_indice != 4:
             #     continue
             side_to_analyse = "R"
             spike_struct = patient.construct_spike_structure(sleep_stage_indices=[stage_indice],
