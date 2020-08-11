@@ -28,14 +28,23 @@ import pattern_discovery.clustering.fca.fca as fca
 from pattern_discovery.clustering.kmean_version.k_mean_clustering import compute_and_plot_clusters_raster_kmean_version
 from pattern_discovery.seq_solver.markov_way import find_sequences_in_ordered_spike_nums
 from pattern_discovery.display.misc import plot_box_plots
+import string
+
+from scipy.stats import kde
+
+
+from cicada.utils.signal import gaussblur1D, norm01
+from cicada.utils.display.rasters import plot_with_imshow
 
 import neo
 import quantities as pq
 import elephant.conversion as elephant_conv
 from elephant.spike_train_correlation import corrcoef
 from scipy.special import comb
+import bisect
 # import elephant.cell_assembly_detection as cad
 # from cell_assembly_detection import cell_assembly_detection
+import math
 
 
 # TODO: see to use scipy.sparse in the future
@@ -2269,6 +2278,209 @@ def read_kmean_cell_assembly_file(file_name):
            sce_times_in_cell_assemblies, sce_times_in_cell_assemblies_by_cell
 
 
+def plot_heatmap_v2(heatmap_matrix, file_name, path_results):
+    heatmap_matrix = np.copy(heatmap_matrix).astype("float")
+    for i in np.arange(len(heatmap_matrix)):
+        # traces_for_imshow[i] = traces_for_imshow[i] / np.median(traces_for_imshow[i])
+        heatmap_matrix[i] = gaussblur1D(heatmap_matrix[i],
+                                           heatmap_matrix.shape[1] / 2, 0)
+        heatmap_matrix[i, :] = norm01(heatmap_matrix[i, :])
+        heatmap_matrix[i, :] = heatmap_matrix[i, :] - np.median(heatmap_matrix[i, :])
+    plot_with_imshow(raster=heatmap_matrix,
+                     n_subplots=1,
+                     hide_x_labels=True,
+                     # y_ticks_labels_size=2,
+                     # y_ticks_labels=cells_in_seq,
+                     path_results=path_results, file_name=file_name,
+                     show_color_bar=False,
+                     values_to_plot=None, cmap="hot",
+                     without_ticks=True,
+                     vmin=0, vmax=1,
+                     reverse_order=True,
+                     save_formats='png'
+                     # lines_to_display=lines_to_display,
+                     # lines_color="white",
+                     # lines_width=0.2,
+                     # lines_band=range_around_slope_in_frames,
+                     # lines_band_color="white",
+                     # lines_band_alpha=0.8,
+                     # speed_array=speed_array
+                     )
+def plot_heatmap_v3(heatmap_matrix, file_name, path_results):
+    fig, ax = plt.subplots()
+    x = []
+    y = []
+    for stim_value in np.arange(heatmap_matrix.shape[0]):
+        for time_bin in np.where(heatmap_matrix[stim_value])[0]:
+            for n in np.arange(heatmap_matrix[stim_value, time_bin]):
+                x.append(time_bin)
+                y.append(stim_value)
+    sns.kdeplot(x, y, cmap="Blues", shade=True, shade_lowest=True)
+
+    save_formats = ["png"]
+    if isinstance(save_formats, str):
+        save_formats = [save_formats]
+
+    for save_format in save_formats:
+        fig.savefig(f'{path_results}/{file_name}.{save_format}',
+                    format=f"{save_format}",
+                    facecolor=fig.get_facecolor())
+    plt.close()
+
+
+def plot_heatmap_v4(heatmap_matrix, file_name, path_results):
+    nbins = 2
+    fig, ax = plt.subplots()
+    x = []
+    y = []
+    xy = np.zeros((np.sum(heatmap_matrix), 2))
+    print(f"xy.shape {xy.shape}")
+    index = 0
+    for stim_value in np.arange(heatmap_matrix.shape[0]):
+        for time_bin in np.where(heatmap_matrix[stim_value])[0]:
+            for n in np.arange(heatmap_matrix[stim_value, time_bin]):
+                x.append(time_bin)
+                y.append(stim_value)
+                xy[index, 0] = time_bin
+                xy[index, 1] = stim_value
+                index += 1
+    x, y = xy.T
+    # Evaluate a gaussian kde on a regular grid of nbins x nbins over data extents
+    try:
+        k = kde.gaussian_kde(xy.T)
+    except np.linalg.LinAlgError:
+        return
+    xi, yi = np.mgrid[x.min():x.max():nbins * 1j, y.min():y.max():nbins * 1j]
+    zi = k(np.vstack([xi.flatten(), yi.flatten()]))
+
+    # plot a density
+    ax.pcolormesh(xi, yi, zi.reshape(xi.shape), cmap=plt.cm.BuGn_r)
+
+    # # add shading
+    # axes[4].set_title('2D Density with shading')
+    # axes[4].pcolormesh(xi, yi, zi.reshape(xi.shape), shading='gouraud', cmap=plt.cm.BuGn_r)
+
+    save_formats = ["png"]
+    if isinstance(save_formats, str):
+        save_formats = [save_formats]
+
+    for save_format in save_formats:
+        fig.savefig(f'{path_results}/{file_name}.{save_format}',
+                    format=f"{save_format}",
+                    facecolor=fig.get_facecolor())
+    plt.close()
+
+def plot_heatmap(heatmap_matrix, file_name, path_results, y_ticks_labels=None, x_ticks_labels=None,
+                                                 x_ticks_pos=None, save_formats = ["png"]):
+    # src: https://www.geodose.com/2018/01/creating-heatmap-in-python-from-scratch.html
+    # DEFINE GRID SIZE AND RADIUS(h)
+    grid_size = 1
+    h = 5
+
+    x = []
+    y = []
+    for stim_value in np.arange(heatmap_matrix.shape[0]):
+        for time_bin in np.where(heatmap_matrix[stim_value])[0]:
+            for n in np.arange(heatmap_matrix[stim_value, time_bin]):
+                x.append(time_bin)
+                y.append(stim_value)
+    if len(x) == 0:
+        print(f"Empty heatmap_matrix: {np.sum(heatmap_matrix)}")
+        return
+
+    x = np.array(x)
+    y = np.array(y)
+    x_min = min(x)
+    x_max = max(x)
+    y_min = min(y)
+    y_max = max(y)
+
+    # CONSTRUCT GRID
+    x_grid = np.arange(x_min - h, x_max + h, grid_size)
+    y_grid = np.arange(y_min - h, y_max + h, grid_size)
+    x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+
+    # GRID CENTER POINT
+    xc = x_mesh + (grid_size / 2)
+    yc = y_mesh + (grid_size / 2)
+
+    # FUNCTION TO CALCULATE INTENSITY WITH QUARTIC KERNEL
+    def kde_quartic(d, h):
+        dn = d / h
+        P = (15 / 16) * (1 - dn ** 2) ** 2
+        return P
+
+    # PROCESSING
+    intensity_list = []
+    for j in range(len(xc)):
+        intensity_row = []
+        for k in range(len(xc[0])):
+            kde_value_list = []
+            for i in range(len(x)):
+                # CALCULATE DISTANCE
+                d = math.sqrt((xc[j][k] - x[i]) ** 2 + (yc[j][k] - y[i]) ** 2)
+                if d <= h:
+                    p = kde_quartic(d, h)
+                else:
+                    p = 0
+                kde_value_list.append(p)
+            # SUM ALL INTENSITY VALUE
+            p_total = sum(kde_value_list)
+            intensity_row.append(p_total)
+        intensity_list.append(intensity_row)
+
+    intensity = np.array(intensity_list)
+
+    background_color = "black"
+    fig, ax = plt.subplots()
+    plt.pcolormesh(x_mesh, y_mesh, intensity)
+    plt.plot(x, y, '|', color="red")
+    plt.colorbar()
+
+    fig.tight_layout()
+    # adjust the space between axis and the edge of the figure
+    # https://matplotlib.org/faq/howto_faq.html#move-the-edge-of-an-axes-to-make-room-for-tick-labels
+    # fig.subplots_adjust(left=0.2)
+    ax.set_facecolor(background_color)
+
+    labels_color = "white"
+    ax.xaxis.label.set_color(labels_color)
+    ax.yaxis.label.set_color(labels_color)
+
+    # ax.yaxis.set_tick_params(labelsize=20)
+    # ax.xaxis.set_tick_params(labelsize=20)
+    ax.tick_params(axis='y', colors=labels_color)
+    ax.tick_params(axis='x', colors=labels_color)
+    # if ticks_labels is not None:
+    #     ax.set_xticklabels(ticks_labels)
+    #     ax.set_yticklabels(ticks_labels)
+    if y_ticks_labels is not None:
+        ax.set_yticks(np.arange(0, len(y_ticks_labels)))
+        ax.set_yticklabels(y_ticks_labels)
+
+    if x_ticks_labels is not None:
+        ax.set_xticks(x_ticks_pos)
+        ax.set_xticklabels(x_ticks_labels)
+
+
+    ax.set_ylim(-1, len(y_ticks_labels))
+
+    cbar = ax.collections[0].colorbar
+    # here set the labelsize by 20
+    cbar.ax.tick_params(colors=labels_color)
+
+    fig.patch.set_facecolor(background_color)
+
+
+    if isinstance(save_formats, str):
+        save_formats = [save_formats]
+
+    for save_format in save_formats:
+        fig.savefig(f'{path_results}/{file_name}.{save_format}',
+                    format=f"{save_format}",
+                    facecolor=fig.get_facecolor())
+    plt.close()
+
 def get_stability_among_cell_assemblies(assemblies_1, assemblies_2):
     """
     
@@ -2703,6 +2915,11 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                 spike_trains = cell_ass_dict["spike_trains"]
                 n_units = len(spike_trains)
 
+                spike_nums = cell_ass_dict["spike_nums"]
+                # print(f'spike_nums.shape {spike_nums.shape}')
+                cell_assemblies_bins = cell_ass_dict["sce_times_in_single_cell_assemblies"]
+                spike_indices = cell_ass_dict["spike_indices"]
+
                 n_assemblies = len(cell_assemblies)
                 # need to have at least 2 assemblies
                 if n_assemblies < 2:
@@ -2719,7 +2936,6 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                       f"Among {n_units} units: "
                       f"{n_responsive_units_total} R, {n_invariant_units_total} I")
 
-
                 for cell_assembly_index, cell_assembly in enumerate(cell_assemblies):
                     # number of repetition
                     if cell_assembly_index in sce_times_in_single_cell_assemblies:
@@ -2727,6 +2943,10 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                     else:
                         ass_n_rep = 0
                     n_responsive_units_in_ass = 0
+                    # units responsives indices, same indices as inside cell_assembly, represent the cell number
+                    responsive_units = []
+                    # the stimulus associated to a responsive unit
+                    stimulus_indices = []
                     print("")
                     print( f"// Cell ass {cell_assembly_index}")
                     for cell_index_in_ass, cell in enumerate(cell_assembly):
@@ -2745,6 +2965,11 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                                                              region=region[1:], wire=microwire)
                         if is_responsive:
                             n_responsive_units_in_ass += 1
+                            responsive_units.append(cell)
+                            if resp_stim_num_e > -1:
+                                stimulus_indices.append(resp_stim_num_e)
+                            else:
+                                stimulus_indices.append(resp_stim_num_m)
 
                         is_invariant, inv_stim_num_e, \
                         inv_stim_num_m = find_unit_response(df=invariant_units_df,
@@ -2786,9 +3011,343 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                     print(f"N rep: {ass_n_rep}")
                     print(f"Assembly probability: {np.round(cell_ass_prob, 4)}")
                     print(" ")
-                    # TODO: boxplots of the probabilities ?
-                    #  change probability so it reflects the probability to have that many responsive units
-                    #  regarding the size of the assembly and the number of units in total
+
+                    # TODO: Ad all units not just RU
+                    if cell_ass_prob < 0.3 and n_responsive_units_in_ass >= 2:
+                        # patient_pair_of_cells_transition_order = []
+                        # print(f"### cell_assembly {cell_assembly}")
+                        # first we want to order spikes in cell assembly by timestamps
+                        n_cells_in_assembly = len(cell_assembly)
+                        if n_cells_in_assembly < 2:
+                            continue
+                        all_pairs_dict = dict()
+                        for ca_index_1 in np.arange(n_cells_in_assembly - 1):
+                            for ca_index_2 in np.arange(ca_index_1 + 1, n_cells_in_assembly):
+                                all_pairs_dict[(ca_index_1, ca_index_2)] = []
+                        delay_max_bx_transitions = 10
+                        # keeping only assemblies in single cell assemblies
+                        if cell_assembly_index in cell_assemblies_bins:
+                            # sce_times_in_single_cell_assemblies is a list of tuple of 2 int (first bin and last bin)
+                            bin_tuples = cell_assemblies_bins[cell_assembly_index]
+                            # summing all transitions between RU
+                            all_ru_transitions = np.zeros((n_responsive_units_in_ass, n_responsive_units_in_ass),
+                                                          dtype="int16")
+                            all_transitions = np.zeros((n_cells_in_assembly, n_cells_in_assembly),
+                                                          dtype="int16")
+                            # len of window heatmap in ms
+                            heatmap_win_len = 50
+                            heatmap_bin_size = 1
+
+                            bin_edges = np.arange(-(heatmap_win_len//2), (heatmap_win_len//2),
+                                                  heatmap_bin_size)
+                            # building heatmap for all cell
+                            heatmap_matrix = np.zeros((n_cells_in_assembly, n_cells_in_assembly,
+                                                      int(heatmap_win_len / heatmap_bin_size)), dtype="int16")
+                            # going throught each SCE
+                            for bin_tuple_index, bin_tuple in enumerate(bin_tuples):
+                                # could be only one bin
+                                bins_to_explore = np.arange(bin_tuple[0], bin_tuple[1] + 1)
+                                # now we want the spike times of all cell in the cell assembly that fire during those bins
+                                units_index_by_spike, spike_times = get_spike_times_in_bins(
+                                    units=cell_assembly,
+                                    spike_indices=spike_indices,
+                                    bins_to_explore=bins_to_explore,
+                                    spike_trains=spike_trains,
+                                    spike_nums=spike_nums)
+                                # units_ordered.extend(units_by_spike)
+                                # spike_times_ordered.extend(spike_times)
+                                # units_index_by_spike contain the index of the units, meaning that the max value
+                                # is len(cell_assembly) - 1
+                                new_order = np.argsort(spike_times)
+                                spike_times_ordered = np.array(spike_times)[new_order]
+                                units_ordered = np.array(units_index_by_spike)[new_order]
+
+                                # index inside the cell_assemblie
+                                units_to_keep = []
+                                for responsive_unit in responsive_units:
+                                    index_in_ca = np.where(np.array(cell_assembly) == responsive_unit)[0][0]
+                                    units_to_keep.append(index_in_ca)
+
+                                # we want to build th heatmap matrix
+                                # looping on each RU
+                                for main_index_in_ca in np.arange(n_cells_in_assembly):
+                                    # main_ru_index_in_ca = np.where(np.array(cell_assembly) == responsive_unit)[0][0]
+                                    # then we go though each spike of this ru in the ordered one and we look
+                                    # when the other one falls around
+                                    main_indices = np.where(units_ordered == main_index_in_ca)[0]
+                                    # print(f"len(main_indices) {len(main_indices)}")
+                                    for main_index in main_indices:
+                                        # then we look heatmap_win_len // 2 before and after
+                                        current_time = spike_times_ordered[main_index]
+                                        # bin_index = bisect.bisect_left(bin_edges, 0)
+                                        # bin_index -= 1
+                                        # bin_index = max(0, bin_index)
+                                        # bin_index = min(bin_index, int(heatmap_win_len / heatmap_bin_size) - 1)
+                                        # heatmap_matrix[main_index_in_ca, main_index_in_ca,
+                                        #                bin_index] += 1
+                                        for loop_direction in ["DOWN", "UP"]:
+                                            if loop_direction == "DOWN":
+                                                index_in_loop = main_index - 1
+                                            else:
+                                                index_in_loop = main_index + 1
+                                            while 0 <= index_in_loop < len(spike_times_ordered):
+                                                # keeping onnly RU
+                                                # if units_ordered[index_in_loop] not in units_to_keep:
+                                                #     if loop_direction == "DOWN":
+                                                #         index_in_loop -= 1
+                                                #     else:
+                                                #         index_in_loop += 1
+                                                #     continue
+                                                spikes_delay = spike_times_ordered[index_in_loop] - \
+                                                               current_time
+                                                if abs(spikes_delay) > (heatmap_win_len // 2):
+                                                    break
+                                                # keeping values in the range
+                                                # putting it in the right bin
+                                                bin_index = bisect.bisect_left(bin_edges, spikes_delay)
+                                                bin_index -= 1
+                                                bin_index = max(0, bin_index)
+                                                bin_index = min(bin_index, int(heatmap_win_len / heatmap_bin_size)-1)
+                                                heatmap_matrix[main_index_in_ca, units_ordered[index_in_loop],
+                                                               bin_index] += 1
+                                                if loop_direction == "DOWN":
+                                                    index_in_loop -= 1
+                                                else:
+                                                    index_in_loop += 1
+
+                                # now we build the transition matrix
+                                transitions = np.zeros((n_cells_in_assembly, n_cells_in_assembly),
+                                                       dtype="int16")
+
+                                for index, unit_number in enumerate(units_ordered[:-1]):
+                                    next_one = index + 1
+                                    delay = spike_times_ordered[next_one] - spike_times_ordered[index]
+                                    while delay <= delay_max_bx_transitions:
+                                        transitions[unit_number, units_ordered[next_one]] += 1
+                                        next_one += 1
+                                        if next_one == len(units_ordered):
+                                            break
+                                        delay = spike_times_ordered[next_one] - spike_times_ordered[index]
+                                    # print(f"delay {delay}")
+                                # filling diagonal with zero
+                                np.fill_diagonal(transitions, 0)
+                                all_transitions = all_transitions + transitions
+
+                                # ##### keeeping only responsive units
+                                new_transitions = np.zeros((n_responsive_units_in_ass, n_responsive_units_in_ass),
+                                                       dtype="int16")
+
+
+                                units_to_keep = np.array(units_to_keep)
+                                for index, unit_to_keep in enumerate(units_to_keep):
+                                    new_transitions[index] = transitions[unit_to_keep, units_to_keep]
+
+                                transitions = new_transitions
+
+                                all_ru_transitions = all_ru_transitions + transitions
+
+                                # pair of units
+                                for pair_tuple in all_pairs_dict.keys():
+                                    ca_1 = pair_tuple[0]
+                                    ca_2 = pair_tuple[1]
+                                    if (ca_1 in units_ordered) and (ca_2 in units_ordered):
+                                        # if (transitions[ca_1, ca_2] > 0) and (transitions[ca_1, ca_2] > transitions[ca_2, ca_1]):
+                                        #     all_pairs_dict[pair_tuple].append(1)
+                                        # elif (transitions[ca_2, ca_1] > 0) and (transitions[ca_2, ca_1] > transitions[ca_1, ca_2]):
+                                        #     all_pairs_dict[pair_tuple].append(2)
+                                        # else:
+                                        #     all_pairs_dict[pair_tuple].append(0)
+                                        # we look at the average time_stamps of each unit
+                                        mean_ca_1_times = np.mean(
+                                            spike_times_ordered[np.where(units_ordered == ca_1)[0]])
+                                        mean_ca_2_times = np.mean(
+                                            spike_times_ordered[np.where(units_ordered == ca_2)[0]])
+                                        if mean_ca_1_times <= mean_ca_2_times:
+                                            all_pairs_dict[pair_tuple].append(0)
+                                        else:
+                                            all_pairs_dict[pair_tuple].append(1)
+
+                                # then we normalized it between 0 and 100%
+                                transitions_normalized = np.copy(transitions)
+                                for line_index in np.arange(len(transitions)):
+                                    sum_line = np.sum(transitions_normalized[line_index])
+                                    if sum_line > 0:
+                                        transitions_normalized[line_index] = (transitions_normalized[
+                                                                                  line_index] / sum_line) * 100
+                                        # same_ca_transition.append(
+                                        #     transitions_normalized[line_index, line_index])
+                                        # if line_index in transitions_delay_dict:
+                                        #     if line_index in transitions_delay_dict[line_index]:
+                                        #         same_ca_transition_delays.extend(
+                                        #             transitions_delay_dict[line_index][line_index])
+                                        sorted_indices = np.argsort(transitions_normalized[line_index])
+                                        if sorted_indices[0] == line_index:
+                                            index_to_add = sorted_indices[1]
+                                        else:
+                                            index_to_add = sorted_indices[0]
+                                        # max_diff_ca_transition.append(
+                                        #     transitions_normalized[line_index, index_to_add])
+                                        # if line_index in transitions_delay_dict:
+                                        #     if index_to_add in transitions_delay_dict[line_index]:
+                                        #         max_diff_ca_transition_delays.extend(
+                                        #             transitions_delay_dict[line_index][index_to_add])
+                                do_plot_transition_matrix = False
+                                if do_plot_transition_matrix:
+                                    file_name = f"{patient_id}_responsive_unit_in_ca_transition_matrix_stage_{stage}_" \
+                                                f"index_{index_stage}_side_{recording_side}_" \
+                                                f"ca_{cell_assembly_index}_bin_{bin_tuple_index}"
+                                    plot_transition_heatmap(heatmap_content=transitions_normalized,
+                                                            annot=transitions,
+                                                            file_name=file_name,
+                                                            path_results=path_results)
+                            do_plot_all_ru_transition_matrix = True
+                            if do_plot_all_ru_transition_matrix:
+                                file_name = f"{patient_id}_delay_{delay_max_bx_transitions}_responsive_unit_" \
+                                            f"in_ca_all_transitions_matrix_" \
+                                            f"stage_{stage}_" \
+                                            f"index_{index_stage}_side_{recording_side}_" \
+                                            f"ca_{cell_assembly_index}"
+                                transitions_normalized = np.copy(all_ru_transitions)
+                                for line_index in np.arange(len(all_ru_transitions)):
+                                    sum_line = np.sum(transitions_normalized[line_index])
+                                    if sum_line > 0:
+                                        transitions_normalized[line_index] = (transitions_normalized[
+                                                                                  line_index] / sum_line) * 100
+                                plot_transition_heatmap(heatmap_content=transitions_normalized,
+                                                        x_ticks_labels=stimulus_indices,
+                                                        y_ticks_labels=stimulus_indices,
+                                                        annot=all_ru_transitions,
+                                                        file_name=file_name,
+                                                        path_results=path_results)
+
+                            do_plot_heatmap = True
+
+                            if do_plot_heatmap:
+                                ticks_step = 5
+                                x_ticks_labels = np.arange(-(heatmap_win_len // 2), (heatmap_win_len // 2)+ticks_step,
+                                                           ticks_step)
+                                x_ticks_pos = np.arange(0,
+                                                        (heatmap_win_len / heatmap_bin_size) +
+                                                        int(ticks_step / heatmap_bin_size),
+                                                        int(ticks_step / heatmap_bin_size))
+                                # plotting from the first and last ru
+                                sorted_stim_arg = np.argsort(stimulus_indices)
+                                stim_args_to_use = [sorted_stim_arg[0], sorted_stim_arg[-1]]
+                                for stim_arg_to_use in stim_args_to_use:
+                                    y_ticks_labels = []
+                                    first_stim = stimulus_indices[stim_arg_to_use]
+                                    file_name = f"{patient_id}_delay_{delay_max_bx_transitions}" \
+                                                f"_{len(responsive_units)}_ru_{len(cell_assembly)}_units_" \
+                                                f"heatmap_stim_{first_stim}_" \
+                                                f"stage_{stage}_" \
+                                                f"index_{index_stage}_side_{recording_side}_" \
+                                                f"ca_{cell_assembly_index}"
+                                    # then organazing heatmap matrix
+                                    ru_heatmap_matrix = np.zeros((n_responsive_units_in_ass, heatmap_matrix.shape[2]),
+                                                                 dtype="int16")
+                                    if stim_arg_to_use == sorted_stim_arg[0]:
+                                        indices_to_loop = np.arange(0, len(stimulus_indices))
+                                    else:
+                                        indices_to_loop = np.arange(0, len(stimulus_indices))[::-1]
+                                    first_ru_index = responsive_units[sorted_stim_arg[indices_to_loop[0]]]
+                                    first_ru_index_in_ca = np.where(np.array(cell_assembly) == first_ru_index)[0][0]
+                                    index_ru_heatmap_matrix = 0
+                                    for stim_index in indices_to_loop:
+                                        # print(f"stim {}")
+                                        y_ticks_labels.append(stimulus_indices[sorted_stim_arg[stim_index]])
+                                        ru_index = responsive_units[sorted_stim_arg[stim_index]]
+                                        ru_index_in_ca = np.where(np.array(cell_assembly) == ru_index)[0][0]
+                                        # print(f"len(cell_assembly) {len(cell_assembly)}")
+                                        ru_heatmap_matrix[index_ru_heatmap_matrix] = \
+                                            heatmap_matrix[first_ru_index_in_ca,
+                                            ru_index_in_ca, :]
+                                        index_ru_heatmap_matrix += 1
+                                    print(f"ru_heatmap_matrix {ru_heatmap_matrix.shape}")
+                                    print(f"heatmap_matrix {heatmap_matrix.shape}")
+                                    # plot_heatmap_v4(heatmap_matrix=ru_heatmap_matrix, file_name=file_name,
+                                    #                         path_results=path_results)
+                                    # plot_heatmap_v2(heatmap_matrix=ru_heatmap_matrix, file_name=file_name,
+                                    #                         path_results=path_results)
+                                    plot_heatmap(heatmap_matrix=ru_heatmap_matrix, file_name=file_name,
+                                                 y_ticks_labels=y_ticks_labels,
+                                                 x_ticks_labels=x_ticks_labels,
+                                                 x_ticks_pos=x_ticks_pos,
+                                                            path_results=path_results,
+                                                 save_formats = ["png", "pdf"])
+                                    file_name = f"{patient_id}_delay_{delay_max_bx_transitions}" \
+                                                f"_{len(responsive_units)}_ru_{len(cell_assembly)}_units_" \
+                                                f"heatmap_bis__stim_{first_stim}_" \
+                                                f"stage_{stage}_" \
+                                                f"index_{index_stage}_side_{recording_side}_" \
+                                                f"ca_{cell_assembly_index}"
+                                    plot_transition_heatmap(heatmap_content=ru_heatmap_matrix,
+                                                            y_ticks_labels=y_ticks_labels,
+                                                            x_ticks_labels=x_ticks_labels,
+                                                            x_ticks_pos=x_ticks_pos,
+                                                            annot=None,
+                                                            file_name=file_name,
+                                                            path_results=path_results)
+                            # includes units that are not responsive
+                            do_plot_all_transition_matrix = True
+                            if do_plot_all_transition_matrix:
+                                file_name = f"{patient_id}_delay_{delay_max_bx_transitions}" \
+                                            f"_{len(responsive_units)}_ru_{len(cell_assembly)}_units_" \
+                                            f"all_transitions_matrix_" \
+                                            f"stage_{stage}_" \
+                                            f"index_{index_stage}_side_{recording_side}_" \
+                                            f"ca_{cell_assembly_index}"
+                                transitions_normalized = np.copy(all_transitions)
+                                for line_index in np.arange(len(all_transitions)):
+                                    sum_line = np.sum(transitions_normalized[line_index])
+                                    if sum_line > 0:
+                                        transitions_normalized[line_index] = (transitions_normalized[
+                                                                                  line_index] / sum_line) * 100
+                                # building ticks labels
+                                # units responsive will get their stimulus number
+                                # others will get a letter
+                                ticks_labels = []
+                                letter_index = 0
+                                letters = list(string.ascii_lowercase) + list(string.ascii_uppercase)
+                                for cell in cell_assembly:
+                                    if cell in responsive_units:
+                                        stimulus_index = stimulus_indices[np.where(np.array(responsive_units) == cell)[0][0]]
+                                        # stimulus to which the unit responds
+                                        ticks_labels.append(stimulus_index)
+                                    else:
+                                        ticks_labels.append(letters[letter_index % len(letters)])
+                                        letter_index += 1
+                                # for responsive_unit in responsive_units:
+                                #     index_in_ca = np.where(np.array(cell_assembly) == responsive_unit)[0][0]
+                                #     units_to_keep.append(index_in_ca)
+                                plot_transition_heatmap(heatmap_content=transitions_normalized,
+                                                        x_ticks_labels=stimulus_indices,
+                                                        y_ticks_labels=stimulus_indices,
+                                                        annot=all_transitions,
+                                                        file_name=file_name,
+                                                        path_results=path_results)
+                            # raise Exception("TESTTT")
+                        # for pair_tuple, pair_order in all_pairs_dict.items():
+                        #     # if a pair of cells is at least active in more than 2 activation of a cell assembly
+                        #     # then we count the ratio of same order of activation of this cell in the assembly
+                        #     if len(pair_order) > 2:
+                        #         pair_order = np.array(pair_order)
+                        #         n_0_occurences = len(np.where(pair_order == 0)[0])
+                        #         n_1_occurences = len(np.where(pair_order == 1)[0])
+                        #         max_occurence = max(n_0_occurences, n_1_occurences)
+                        #         ratio_activation = (max_occurence / len(pair_order)) * 100
+                        #         patient_pair_of_cells_transition_order.append(ratio_activation)
+                        # # print(f"patient_pair_of_cells_transition_order {patient_pair_of_cells_transition_order}")
+                        # box_plot_dict = dict()
+                        # n_sessions_dict = dict()
+                        # box_plot_dict[""] = patient_pair_of_cells_transition_order
+                        # plot_box_plots(data_dict=box_plot_dict, title="",
+                        #                # n_sessions_dict=n_sessions_dict,
+                        #                filename=f"{patient_id}_pair_order_in_ca",
+                        #                path_results=path_results, with_scatters=True,
+                        #                scatter_size=100,
+                        #                # y_log=True,
+                        #                y_label=f"Same order in a CA by pair (%)", colors=brewer_colors, param=param,
+                        #                save_formats=save_formats)
         # plotting scatter for each patient, n_cells_in_assembly vs n_responsive_units in assembly
         for hemisphere, prob_data in probabilities_data.items():
             plot_responsive_units_in_assembly_scatter(patient_id=patient_id + f"_{hemisphere}",
@@ -3047,12 +3606,16 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                        y_label=f"Same order in a CA by pair (%)", colors=brewer_colors, param=param,
                        save_formats=save_formats)
 
+
 def plot_transition_heatmap(heatmap_content, annot,
-                            file_name, path_results):
+                            file_name, path_results, y_ticks_labels=None, x_ticks_labels=None, x_ticks_pos=None,
+                            y_ticks_pos=None):
     background_color = "black"
     fig, ax = plt.subplots()
     # fmt='d' means integers
-    ax = sns.heatmap(heatmap_content, annot=annot, fmt='d', cmap="YlGnBu", vmin=0, vmax=100)
+    ax = sns.heatmap(heatmap_content, annot=annot, fmt='d', cmap="YlGnBu",
+                     vmin=np.min(heatmap_content), vmax=np.max(heatmap_content))
+    #vmin=0, vmax=100
     fig.tight_layout()
     # adjust the space between axis and the edge of the figure
     # https://matplotlib.org/faq/howto_faq.html#move-the-edge-of-an-axes-to-make-room-for-tick-labels
@@ -3067,6 +3630,14 @@ def plot_transition_heatmap(heatmap_content, annot,
     # ax.xaxis.set_tick_params(labelsize=20)
     ax.tick_params(axis='y', colors=labels_color)
     ax.tick_params(axis='x', colors=labels_color)
+    if x_ticks_labels is not None:
+        if x_ticks_pos is not None:
+            ax.set_xticks(x_ticks_pos)
+        ax.set_xticklabels(x_ticks_labels)
+    if y_ticks_labels is not None:
+        if y_ticks_pos is not None:
+            ax.set_yticks(y_ticks_pos)
+        ax.set_yticklabels(y_ticks_labels)
 
     cbar = ax.collections[0].colorbar
     # here set the labelsize by 20
@@ -3401,16 +3972,17 @@ def main():
     # patient_ids = ["046fn2", "052fn2", "028fn1"]
     # patient_ids = ["034fn1", "035fn2", "037fn2"]
 
-    patient_ids = ["034fn1"]
+    # patient_ids = ["034fn1"]
     # patient_ids = ["052fn2"]
     # patient_ids = ["046fn2"]
     # patient_ids = ["035fn2"] # memory issue
-    patient_ids = ["028fn1", "034fn1", "035fn2", "046fn2", "052fn2"]
+    # patient_ids = ["028fn1", "034fn1", "035fn2", "046fn2", "052fn2"]
 
     # best responsive units
     # patient_ids = ["046fn2", "052fn2", "028fn1"]
     # patient_ids = ["035fn2"]
-    # patient_ids = ["046fn2"]
+    patient_ids = ["046fn2", "052fn2"]
+    # patient_ids = []
 
     # decrease_factor = 4  # used to be 4
 

@@ -12,7 +12,7 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
                                 short_description="Display patient information",
                                 long_description=long_description,
                                 config_handler=config_handler,
-                                accepted_data_formats=["sEEG_BONN"])
+                                accepted_data_formats=["PyMEICA"])
 
     def copy(self):
         """
@@ -34,8 +34,8 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
         super().check_data()
 
         for session_index, session_data in enumerate(self._data_to_analyse):
-            if session_data.DATA_FORMAT != "sEEG_BONN":
-                self.invalid_data_help = f"Non sEEG_BONN format compatibility not yet implemented: " \
+            if session_data.DATA_FORMAT != "PyMEICA":
+                self.invalid_data_help = f"Non PyMEICA format compatibility not yet implemented: " \
                                          f"{session_data.DATA_FORMAT}"
                 return False
 

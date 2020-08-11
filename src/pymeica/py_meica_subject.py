@@ -9,6 +9,7 @@ class SleepStage:
         # timstamps are float, it's needed to multiple by 10^3 to get the real value, with represents microseconds
         self.start_time = start_time * 1000
         self.stop_time = stop_time * 1000
+        self.stop_time = stop_time * 1000
         # duration is in microseconds
         self.duration = self.stop_time - self.start_time
         self.sleep_stage = sleep_stage
@@ -29,19 +30,78 @@ class SleepStage:
         result += f"conversion_timestamp  {self.conversion_timestamp}, "
         return result
 
+#
+"""
+compatible with cicada.analysis.cicada_analysis_format_wrapper.CicadaAnalysisFormatWrapper
+because it implements identifier decorator, as well as load_data and is_data_valid
+But we don't import cicada code so this package could also be independent. 
+"""
+class PyMeicaSubject(CicadaAnalysisFormatWrapper):
 
-class CicadaBonnPatient(CicadaAnalysisFormatWrapper):
+    DATA_FORMAT = "PyMEICA"
 
-    DATA_FORMAT = "sEEG_BONN"
-
-    WRAPPER_ID = "BonnPatient"
+    WRAPPER_ID = "PyMEICASubject"
 
     def __init__(self, data_ref, load_data=True, verbose=1):
-        CicadaAnalysisFormatWrapper.__init__(self, data_ref=data_ref, data_format="sEEG_BONN", load_data=load_data)
+        CicadaAnalysisFormatWrapper.__init__(self, data_ref=data_ref, data_format=self.DATA_FORMAT, load_data=load_data)
+
+        # self._data_ref = data_ref
+        # self.load_data_at_init = load_data
+        # self._data_format = self.DATA_FORMAT
+
         # always load at the start
         self._identifier = os.path.basename(data_ref)
-        if verbose:
-            print(f"Creating BonnPatient {self._identifier}")
+        self.verbose = verbose
+
+        # variables initiated in self.load_data()
+        # number of units, one Multi-unit count as one unit
+        self.n_units = 0
+
+        # The variable 'spikes' stores the spike shape from all spikes
+        # measured in this channel.
+        # This variable contains a matrix with dimension N_spikes x 64.
+        # Each row corresponds to a single spike and gives 64 voltage values
+        # of this spike aligned to the maximum.
+        self.spikes_by_microwire = dict()
+
+        # The variable 'cluster_class' provides information about the timing of
+        # each spike and the cluster that it corresponds to.
+        # This variable contains a N_spikes x 2 matrix in which the first
+        # column contains the cluster that the spike belongs to and the
+        # second column saves the time of the spike.
+        # replace by the code of the type of unit: SU, MU etc... 1 = MU  2 = SU -1 = Artif.
+        self.spikes_time_by_microwire = dict()
+
+        self.cluster_info = None
+
+
+    @staticmethod
+    def is_data_valid(data_ref):
+        """
+        Check if the data can be an input for this wrapper as data_ref
+        Args:
+            data_ref: file or directory
+
+        Returns: a boolean
+
+        """
+        if not os.path.isdir(data_ref):
+            return False
+
+        files_in_dir = [item for item in os.listdir(data_ref)
+                        if os.path.isfile(os.path.join(data_ref, item))]
+        identifier = os.path.basename(data_ref)
+
+        files_to_find = ["cluster_info.mat", f"{identifier}_sleepstages.mat"]
+        for file_to_find in files_to_find:
+            if file_to_find not in files_in_dir:
+                return False
+
+        return True
+
+    def load_data(self):
+        if self.verbose:
+            print(f"Loading data for PyMeicaSubject {self._identifier}")
         # number of units, one Multi-unit count as one unit
         self.n_units = 0
 
@@ -61,7 +121,9 @@ class CicadaBonnPatient(CicadaAnalysisFormatWrapper):
         # This variable contains a N_spikes x 2 matrix in which the first
         # column contains the cluster that the spike belongs to and the
         # second column saves the time of the spike.
+
         original_spikes_cluster_by_microwire = dict()
+
         # replace by the code of the type of unit: SU, MU etc... 1 = MU  2 = SU -1 = Artif.
         spikes_cluster_by_microwire = dict()
         self.spikes_time_by_microwire = dict()
@@ -110,6 +172,8 @@ class CicadaBonnPatient(CicadaAnalysisFormatWrapper):
             total_duration += ss.duration
             self.sleep_stages.append(ss)
         self.nb_sleep_stages = len(self.sleep_stages)
+        # TODO: See to build a vector that give for any timestamps in the whole recording to which
+        #  Sleepstage it belongs
         # print(f"sleepstages[0]: {sleepstages[1]}")
         # print(f"conversion_datetime {conversion_datetime}")
         # print(f"conversion_timestamp {conversion_timestamp[0][0]}")
@@ -195,34 +259,6 @@ class CicadaBonnPatient(CicadaAnalysisFormatWrapper):
                     print(f"\n \n")
         self.n_microwires = len(self.spikes_by_microwire)
         self.available_micro_wires = np.array(self.available_micro_wires)
-
-    @staticmethod
-    def is_data_valid(data_ref):
-        """
-        Check if the data can be an input for this wrapper as data_ref
-        Args:
-            data_ref: file or directory
-
-        Returns: a boolean
-
-        """
-        if not os.path.isdir(data_ref):
-            return False
-
-        files_in_dir = [item for item in os.listdir(data_ref)
-                        if os.path.isfile(os.path.join(data_ref, item))]
-        identifier = os.path.basename(data_ref)
-
-        files_to_find = ["cluster_info.mat", f"{identifier}_sleepstages.mat"]
-        for file_to_find in files_to_find:
-            if file_to_find not in files_in_dir:
-                return False
-
-        return True
-
-    def load_data(self):
-        # everything is loaded in __init__()
-        pass
 
     @property
     def identifier(self):
