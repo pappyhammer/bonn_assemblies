@@ -1,0 +1,4 @@
+neo
+quantities
+elephant
+scipy

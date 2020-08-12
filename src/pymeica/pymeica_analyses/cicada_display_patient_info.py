@@ -77,7 +77,7 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
         for session_index, session_data in enumerate(self._data_to_analyse):
             session_identifier = session_data.identifier
             print(f"-------------- {session_identifier} -------------- ")
-
+            session_data.descriptive_stats()
             self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
 
         print(f"Raster analysis run in {time() - self.analysis_start_time} sec")

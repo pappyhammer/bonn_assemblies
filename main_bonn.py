@@ -948,6 +948,7 @@ class BonnPatient:
                             if test_fake_data:
                                 raise Exception("first try")
 
+    # TODO: redo it but with
     def build_raster_for_each_stage_sleep(self, decrease_factor=4,
                                           with_ordering=True, sliding_window_ms=250,
                                           keeping_only_SU=False, with_concatenation=False,
@@ -1664,6 +1665,7 @@ class BonnPatient:
                     cluster = cluster_infos[unit_cluster]
                     if (cluster < 1) or (cluster > 2):
                         continue
+                    # 1 == MU, 2 == SU
                     if keeping_only_SU:
                         if cluster == 1:
                             # not taking into consideraiton MU
