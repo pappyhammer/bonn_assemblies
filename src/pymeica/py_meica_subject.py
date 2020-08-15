@@ -5,7 +5,6 @@ import numpy as np
 from sortedcontainers import SortedList, SortedDict
 
 
-
 class SpikeStructure:
 
     def __init__(self, patient, spike_trains, microwire_labels, cluster_labels, cluster_indices,
@@ -38,10 +37,9 @@ class SpikeStructure:
         self.labels = self.get_labels()
         self.ordered_indices = ordered_indices
         self.ordered_labels = None
-        # one_sec reprents the number of times in one sec
-        self.one_sec = one_sec
+        self.ordered_spike_trains = None
         if self.ordered_indices is not None:
-            self.ordered_spike_trains = []
+            self.ordered_spike_trains = list()
             for index in ordered_indices:
                 self.ordered_spike_trains.append(self.spike_trains[index])
             self.ordered_labels = []
@@ -57,12 +55,6 @@ class SpikeStructure:
             labels.append(f"{cluster_to_label[self.cluster_labels[i]]}{micro_wire} "
                           f"{channel}")
         return labels
-
-    def get_nb_times_by_ms(self, nb_ms, as_int=False):
-        result = (nb_ms * self.one_sec) / 1000
-        if as_int:
-            return int(result)
-        return result
 
     def set_order(self, ordered_indices):
         if ordered_indices is None:
@@ -85,6 +77,7 @@ class SleepStage:
         self.stop_time = stop_time * 1000
         # duration is in microseconds
         self.duration = self.stop_time - self.start_time
+        self.duration_sec = self.duration / 1000000
         self.sleep_stage = sleep_stage
         self.conversion_datetime = conversion_datetime
         self.conversion_timestamp = conversion_timestamp * 1000
@@ -93,14 +86,13 @@ class SleepStage:
     def __str__(self):
         result = ""
         result += f"num  {self.number}, "
-        result += f"sleep_stage  {self.sleep_stage}, "
-        result += f"start_time  {self.start_time}, "
-        result += f"stop_time  {self.stop_time}, \n"
-        result += f"duration (usec)  {self.duration}, "
-        result += f"duration (sec)  {self.duration / 1000000}, "
-        result += f"duration (min)  {(self.duration / 1000000) / 60}"
-        result += f",\n conversion_datetime  {self.conversion_datetime}, "
-        result += f"conversion_timestamp  {self.conversion_timestamp}, "
+        result += f"stage  {self.sleep_stage}, "
+        # result += f"start_time  {self.start_time}, "
+        # result += f"stop_time  {self.stop_time}, \n"
+        # result += f"duration (usec)  {self.duration}, "
+        result += f"duration: {self.duration_sec} sec, {(self.duration / 1000000) / 60} min"
+        # result += f",\n conversion_datetime  {self.conversion_datetime}, "
+        # result += f"conversion_timestamp  {self.conversion_timestamp}, "
         return result
 
 #
@@ -147,6 +139,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
 
         self.channel_info_by_microwire = None
 
+        # list of SleepStage instances (in chronological order)
         self.sleep_stages = list()
 
         self.cluster_info = None
@@ -271,9 +264,13 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         self.available_micro_wires = []
         for file_in_dir in files_in_dir:
             # return
-            if file_in_dir.startswith("times_pos_CSC"):
-                # -1 to start by 0, to respect other matrices order
-                microwire_number = int(file_in_dir[13:-4]) - 1
+            # times_pos_CSC matched the full night recordings
+            if file_in_dir.startswith("times_pos_CSC") or file_in_dir.startswith("times_CSC"):
+                if file_in_dir.startswith("times_pos_CSC"):
+                    # -1 to start by 0, to respect other matrices order
+                    microwire_number = int(file_in_dir[13:-4]) - 1
+                else:
+                    microwire_number = int(file_in_dir[9:-4]) - 1
                 self.available_micro_wires.append(microwire_number)
                 data_file = hdf5storage.loadmat(os.path.join(self._data_ref, file_in_dir))
                 # print(f"data_file {data_file}")
@@ -391,6 +388,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
             indices, channels = self.select_channels_with_exact_same_name_without_number(channels_without_number)
             micro_wire_to_keep.extend(indices)
             micro_wire_to_keep.extend(self.select_channels_with_exact_same_name_with_number(channels_with_number))
+
             # remove redondant microwire and sort them
             micro_wire_to_keep = np.unique(micro_wire_to_keep)
             # then we check if all the micro_wire data are available
@@ -514,13 +512,12 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         # 1 = MU  2 = SU -1 = Artif.
         # 0 = Unassigned (is ignored)
 
-        # TODO: Simplify SpikeStructure for now
-        spike_struct = SpikeStructure(patient=self, spike_trains=spike_trains, spike_nums=spike_nums,
+        spike_struct = SpikeStructure(patient=self, spike_trains=spike_trains,
                                       microwire_labels=micro_wire_labels,
                                       cluster_labels=cluster_labels,
                                       title=title, cluster_indices=cluster_indices)
         # print(f"End of construct_spike_structure for {self.patient_id}")
-        return spike_struct  # spike_nums, micro_wire_to_keep, channels_to_keep, labels
+        return spike_struct
 
     def select_channels_starting_by(self, channels_starting_by):
         """
@@ -586,7 +583,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
             n_su = 0
             n_mu = 0
             micro_wire_to_keep = []
-            if (channels_starting_by is None):
+            if channels_starting_by is None:
                 micro_wire_to_keep = self.available_micro_wires
                 print(f"n microwires: {len(micro_wire_to_keep)}")
             else:
@@ -601,7 +598,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                     for d in to_del:
                         micro_wire_to_keep = micro_wire_to_keep[micro_wire_to_keep != d]
 
-                print(f"n microwiresin {channels_starting_by}: {len(micro_wire_to_keep)}")
+                print(f"n microwires in {channels_starting_by}: {len(micro_wire_to_keep)}")
             mu_by_area_count = SortedDict()
             su_by_area_count = SortedDict()
             # A	AH	EC	MH	PH	PHC
@@ -630,8 +627,10 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                         counter_dict["A"] = counter_dict.get("A", 0) + 1
                     if ("PH" in channel_name) and ("PHC" not in channel_name):
                         counter_dict["PH"] = counter_dict.get("PH", 0) + 1
-
-            print(f"For side {channels_starting_by}: n_su {n_su}, n_mu {n_mu}")
+            if channels_starting_by is None:
+                print(f"From both side: n_su {n_su}, n_mu {n_mu}")
+            else:
+                print(f"For side {channels_starting_by}: n_su {n_su}, n_mu {n_mu}")
             print(f"mu_by_area_count: {mu_by_area_count}")
             print(f"su_by_area_count: {su_by_area_count}")
             print("")

@@ -7,9 +7,9 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
     def __init__(self, config_handler=None):
         """
         """
-        long_description = '<p align="center"><b>Display patient information</b></p><br>'
-        CicadaAnalysis.__init__(self, name="patient_info", family_id="Descriptive",
-                                short_description="Display patient information",
+        long_description = '<p align="center"><b>Display subject information</b></p><br>'
+        CicadaAnalysis.__init__(self, name="Subject description", family_id="Descriptive",
+                                short_description="Display subject information",
                                 long_description=long_description,
                                 config_handler=config_handler,
                                 accepted_data_formats=["PyMEICA"])
