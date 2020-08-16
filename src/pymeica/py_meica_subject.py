@@ -78,6 +78,7 @@ class SleepStage:
         # duration is in microseconds
         self.duration = self.stop_time - self.start_time
         self.duration_sec = self.duration / 1000000
+        # string describing the stage (like "W", "3", "R")
         self.sleep_stage = sleep_stage
         self.conversion_datetime = conversion_datetime
         self.conversion_timestamp = conversion_timestamp * 1000
@@ -90,7 +91,7 @@ class SleepStage:
         # result += f"start_time  {self.start_time}, "
         # result += f"stop_time  {self.stop_time}, \n"
         # result += f"duration (usec)  {self.duration}, "
-        result += f"duration: {self.duration_sec} sec, {(self.duration / 1000000) / 60} min"
+        result += f"duration: {self.duration_sec:1f} sec, {(self.duration / 1000000) / 60:1f} min"
         # result += f",\n conversion_datetime  {self.conversion_datetime}, "
         # result += f"conversion_timestamp  {self.conversion_timestamp}, "
         return result
@@ -366,7 +367,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         """
         # TODO: See to add in spike structure an option to know when there are time gaps
 
-        print(f"construct_spike_structure start for {self.identifier}")
+        # print(f"construct_spike_structure start for {self.identifier}")
 
         # don't put non-assigned clusters
         only_SU_and_MU = True

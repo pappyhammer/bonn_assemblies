@@ -12,7 +12,6 @@ import time
 import multiprocessing as mp
 from pathos.multiprocessing import ProcessingPool as Pool
 
-
 from pymeica.utils.display.rasters import plot_raster
 from pymeica.utils.display.colors import BREWER_COLORS
 
@@ -31,14 +30,43 @@ from pymeica.utils.spike_trains import create_spike_train_neo_format, spike_trai
 
 from pymeica.utils.display.rasters import plot_raster
 
+
 def mcad_main(stage_descr, results_path,
               k_means_cluster_size,
-              n_surrogate_k_mean,
+              n_surrogates_k_mean,
+              k_mean_n_trials,
               spike_trains_binsize,
+              max_size_chunk_in_sec,
+              min_size_chunk_in_sec,
               spike_trains, cells_label, subject_id,
               remove_high_firing_cells,
               n_surrogate_activity_threshold, perc_threshold, verbose,
-              firing_rate_threshold=5):
+              firing_rate_threshold=5,
+              min_n_assemblies=1):
+    """
+
+    :param stage_descr:
+    :param results_path:
+    :param k_means_cluster_size:
+    :param n_surrogates_k_mean: int or list of 2 int, indicate how many surrogates should be used to determine if a
+    k-mean results pass the threshold. If there are two values, then the first value indicate a low version,
+    that is tried fast to save computational time, if it passed the threshold, then the second value is run for
+    confirmation.
+    :param k_mean_n_trials: int or list of 2 int, indicate how many trial of k-mean should be run to decide which
+    cluster holds the best silhouette (the best orthogonality in a sort). It's different than finding a threshold.
+    :param min_n_assemblies: if there are two number of surrogates for kmean, this is used to try the second if the
+    minimum of assemblies has been found. The assemblies figure is also produce only if this given number is reached
+    :param spike_trains_binsize:
+    :param spike_trains:
+    :param cells_label:
+    :param subject_id:
+    :param remove_high_firing_cells:
+    :param n_surrogate_activity_threshold:
+    :param perc_threshold:
+    :param verbose:
+    :param firing_rate_threshold:
+    :return:
+    """
     # ------------------------ params ------------------------
     with_cells_in_cluster_seq_sorted = False
     # kmean clustering
@@ -50,19 +78,22 @@ def mcad_main(stage_descr, results_path,
     # spike_trains_binsize = 25
     binsize = spike_trains_binsize * pq.ms
 
+    max_size_chunk_in_bins = (max_size_chunk_in_sec * 1000) // spike_trains_binsize
+    min_size_chunk_in_bins = (min_size_chunk_in_sec * 1000) // spike_trains_binsize
+
     # first we create a spike_trains in the neo format
     spike_trains, t_start, t_stop = create_spike_train_neo_format(spike_trains)
 
     duration_in_sec = (t_stop - t_start) / 1000
-    print("")
-    print(f"## duration in sec {np.round(duration_in_sec, 3)}")
-    print("")
-    # TODO: find a way to have no limitation of time (split in block of 180 sec ?  ??)
-    if duration_in_sec > 330:
-        print(f"skipping this stage because duration > 180 sec")
-        path_results = os.path.join(results_path, f"k_mean_{subject_id}_{stage_descr}_skipped")
-        os.mkdir(path_results)
-        return
+    # print("")
+    # print(f"## duration in sec {np.round(duration_in_sec, 3)}")
+    # print("")
+
+    # if duration_in_sec > 330:
+    #     print(f"skipping this stage because duration > 180 sec")
+    #     path_results = os.path.join(results_path, f"k_mean_{subject_id}_{stage_descr}_skipped")
+    #     os.mkdir(path_results)
+    #     return
 
     results_path = os.path.join(results_path, f"mcad_{subject_id}_{stage_descr}")
     os.mkdir(results_path)
@@ -72,17 +103,24 @@ def mcad_main(stage_descr, results_path,
             spike_trains_threshold_by_firing_rate(spike_trains=spike_trains,
                                                   firing_rate_threshold=firing_rate_threshold,
                                                   duration_in_sec=duration_in_sec)
+        backup_spike_trains = spike_trains
         spike_trains = filtered_spike_trains
         n_cells_total = len(cells_label)
+        cells_label_removed = [(index, label) for index, label in enumerate(cells_label) if
+                               index not in cells_below_threshold]
         cells_label = [label for index, label in enumerate(cells_label) if index in cells_below_threshold]
         n_cells = len(cells_label)
         print(f"{n_cells_total - n_cells} cells had firing rate > {firing_rate_threshold} Hz and have been removed.")
+        if len(cells_label_removed):
+            for index, label in cells_label_removed:
+                print(f"{label}, {len(backup_spike_trains[index])}")
 
     n_cells = len(spike_trains)
 
-    print(f"Nb units: {len(spike_trains)}")
+    print(f"Nb units analysed: {len(spike_trains)}")
+    print("Below: unit type, cluster, electrode & number of spikes ")
     for i, train in enumerate(spike_trains):
-        print(f"{cells_label[i]}, nb spikes: {len(train)}")
+        print(f"{cells_label[i]}, {len(train)}")
 
     neo_spike_trains = []
     for cell in np.arange(n_cells):
@@ -114,101 +152,140 @@ def mcad_main(stage_descr, results_path,
     else:
         spike_nums = spike_trains_binned.to_bool_array().astype("int8")
 
-    print(f"n bins {spike_nums.shape[1]}")
+    n_bins_in_spike_nums = spike_nums.shape[1]
+
+    # print(f"n bins {n_bins_in_spike_nums}")
+
     sliding_window_duration = 1
 
-    start_time = time.time()
+    # -----------------------------------------------------------------------------
+    # using chunk_size, we divide spike_nums in several piece if it's too big
+    spike_nums_to_process = []
+    # list of 2 int representing the first and last bin of the chunk from the whole sleep stage
+    first_and_last_bins = []
 
-    activity_threshold = get_sce_detection_threshold(spike_nums=spike_nums,
-                                                     window_duration=sliding_window_duration,
-                                                     use_max_of_each_surrogate=False,
-                                                     spike_train_mode=False,
-                                                     n_surrogate=n_surrogate_activity_threshold,
-                                                     perc_threshold=perc_threshold,
-                                                     debug_mode=False)
-    stop_time = time.time()
-    print(f"Time to compute synchronous event threshold "
-          f"{np.round(stop_time - start_time, 3)} s")
-    # activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
-    #
-    #                                                  window_duration=sliding_window_duration,
-    #                                                  use_max_of_each_surrogate=False,
-    #                                                  spike_train_mode=True,
-    #                                                  n_surrogate=n_surrogate_activity_threshold,
-    #                                                  perc_threshold=perc_threshold,
-    #                                                  debug_mode=False)
-    print(f"activity_threshold {activity_threshold}")
-    # we set at 2 the minimum the number of cell to define a synchronous event
-    if activity_threshold < 2:
-        activity_threshold = 2
-        print(f"activity_threshold increased to: {activity_threshold}")
-    print(f"sliding_window_duration {sliding_window_duration}")
+    if n_bins_in_spike_nums > (max_size_chunk_in_bins + min_size_chunk_in_bins):
+        print(f"n_bins_in_spike_nums {n_bins_in_spike_nums}")
+        print(f"max_size_chunk_in_bins {max_size_chunk_in_bins}")
+        print(f"np.arange(0, n_bins_in_spike_nums, max_size_chunk_in_bins) "
+              f"{np.arange(0, n_bins_in_spike_nums, max_size_chunk_in_bins)}")
+        for index_bin in np.arange(0, n_bins_in_spike_nums, max_size_chunk_in_bins):
+            if index_bin + max_size_chunk_in_bins > n_bins_in_spike_nums:
+                if (n_bins_in_spike_nums - index_bin) < min_size_chunk_in_bins:
+                    continue
+                spike_nums_chunk = np.copy(spike_nums)[:, index_bin:]
+                spike_nums_to_process.append(spike_nums_chunk)
+                first_and_last_bins.append([index_bin, n_bins_in_spike_nums - 1])
+                continue
 
-    plot_raster(spike_nums=spike_nums, path_results=results_path,
-                spike_train_format=False,
-                title=f"raster plot {subject_id}",
-                file_name=f"{stage_descr}_test_spike_nums_{subject_id}",
-                y_ticks_labels=cells_label,
-                y_ticks_labels_size=4,
-                save_raster=True,
-                show_raster=False,
-                plot_with_amplitude=False,
-                activity_threshold=activity_threshold,
-                # 500 ms window
-                sliding_window_duration=sliding_window_duration,
-                show_sum_spikes_as_percentage=True,
-                spike_shape="|",
-                spike_shape_size=1,
-                save_formats="pdf")
+            spike_nums_chunk = np.copy(spike_nums)[:, index_bin:index_bin +
+                                                                max_size_chunk_in_bins]
+            spike_nums_to_process.append(spike_nums_chunk)
+            first_and_last_bins.append([index_bin, index_bin + max_size_chunk_in_bins - 1])
+        print(f"first_and_last_bins {first_and_last_bins}")
+    else:
+        spike_nums_to_process = [spike_nums]
+        first_and_last_bins.append([0, n_bins_in_spike_nums - 1])
 
-    # TODO: detect_sce_with_sliding_window with spike_trains
-    sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_nums,
-                                                          window_duration=sliding_window_duration,
-                                                          perc_threshold=perc_threshold,
-                                                          activity_threshold=activity_threshold,
-                                                          debug_mode=False)
+    if len(spike_nums_to_process) > 1:
+        print(f"Splitting this stage in {len(spike_nums_to_process)} chunks")
 
-    print(f"sce_with_sliding_window detected")
-    cellsinpeak = sce_detection_result[2]
-    SCE_times = sce_detection_result[1]
-    sce_times_bool = sce_detection_result[0]
-    sce_times_numbers = sce_detection_result[3]
-    print(f"Nb SCE: {cellsinpeak.shape}, sce_times len {len(SCE_times)}")
-    # raise Exception("GAME OVER")
-    # print(f"Nb spikes by SCE: {np.sum(cellsinpeak, axis=0)}")
-    # cells_isi = tools_misc.get_isi(spike_data=spike_struct.spike_trains, spike_trains_format=True)
-    # for cell_index in np.arange(len(spike_struct.spike_trains)):
-    #     print(f"{spike_struct.labels[cell_index]} median isi: {np.round(np.median(cells_isi[cell_index]), 2)}, "
-    #           f"mean isi {np.round(np.mean(cells_isi[cell_index]), 2)}")
+    for spike_nums_index, spike_nums in enumerate(spike_nums_to_process):
+        first_bin_index, last_bin_index = first_and_last_bins[spike_nums_index]
 
-    # nb_neurons = len(cellsinpeak)
+        bin_descr = f"bins_{first_bin_index}_{last_bin_index}"
 
-    # return a dict of list of list of neurons, representing the best clusters
-    # (as many as nth_best_clusters).
-    # the key is the K from the k-mean
+        activity_threshold = get_sce_detection_threshold(spike_nums=spike_nums,
+                                                         window_duration=sliding_window_duration,
+                                                         use_max_of_each_surrogate=False,
+                                                         spike_train_mode=False,
+                                                         n_surrogate=n_surrogate_activity_threshold,
+                                                         perc_threshold=perc_threshold,
+                                                         debug_mode=False)
+        # stop_time = time.time()
+        # print(f"Time to compute synchronous event threshold "
+        #       f"{np.round(stop_time - start_time, 3)} s")
+        # activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
+        #
+        #                                                  window_duration=sliding_window_duration,
+        #                                                  use_max_of_each_surrogate=False,
+        #                                                  spike_train_mode=True,
+        #                                                  n_surrogate=n_surrogate_activity_threshold,
+        #                                                  perc_threshold=perc_threshold,
+        #                                                  debug_mode=False)
+        # print(f"activity_threshold {int(activity_threshold)}")
+        # we set at 2 the minimum the number of cell to define a synchronous event
+        if activity_threshold < 2:
+            activity_threshold = 2
+            # print(f"activity_threshold increased to: {int(activity_threshold)}")
+        # print(f"sliding_window_duration {sliding_window_duration}")
 
-    data_descr = f"{subject_id} {stage_descr} sleep"
-    #
-    compute_and_plot_clusters_raster_kmean_version(labels=cells_label,
-                                                   activity_threshold=activity_threshold,
-                                                   range_n_clusters_k_mean=k_means_cluster_size,
-                                                   n_surrogate_k_mean=n_surrogate_k_mean,
-                                                   with_shuffling=with_shuffling,
-                                                   spike_nums_to_use=spike_nums,
-                                                   cellsinpeak=cellsinpeak,
-                                                   data_descr=data_descr,
-                                                   path_results=results_path,
-                                                   keep_only_the_best=keep_only_the_best_kmean_cluster,
-                                                   sliding_window_duration=sliding_window_duration,
-                                                   SCE_times=SCE_times,
-                                                   sce_times_numbers=sce_times_numbers,
-                                                   perc_threshold=perc_threshold,
-                                                   n_surrogate_activity_threshold=
-                                                   n_surrogate_activity_threshold,
-                                                   debug_mode=verbose > 0,
-                                                   fct_to_keep_best_silhouettes=np.median,
-                                                   with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
+        plot_raster(spike_nums=spike_nums, path_results=results_path,
+                    spike_train_format=False,
+                    title=f"raster plot {subject_id}",
+                    file_name=f"{stage_descr}_test_spike_nums_{subject_id}_{bin_descr}",
+                    y_ticks_labels=cells_label,
+                    y_ticks_labels_size=4,
+                    save_raster=True,
+                    show_raster=False,
+                    plot_with_amplitude=False,
+                    activity_threshold=activity_threshold,
+                    # 500 ms window
+                    sliding_window_duration=sliding_window_duration,
+                    show_sum_spikes_as_percentage=True,
+                    spike_shape="|",
+                    spike_shape_size=1,
+                    save_formats="pdf")
 
+        # TODO: detect_sce_with_sliding_window with spike_trains
+        sce_detection_result = detect_sce_with_sliding_window(spike_nums=spike_nums,
+                                                              window_duration=sliding_window_duration,
+                                                              perc_threshold=perc_threshold,
+                                                              activity_threshold=activity_threshold,
+                                                              debug_mode=False)
+
+        # print(f"sce_with_sliding_window detected")
+        cellsinpeak = sce_detection_result[2]
+        SCE_times = sce_detection_result[1]
+        sce_times_bool = sce_detection_result[0]
+        sce_times_numbers = sce_detection_result[3]
+        print(f"Nb units x SCE: {cellsinpeak.shape}")
+        # raise Exception("GAME OVER")
+        # print(f"Nb spikes by SCE: {np.sum(cellsinpeak, axis=0)}")
+        # cells_isi = tools_misc.get_isi(spike_data=spike_struct.spike_trains, spike_trains_format=True)
+        # for cell_index in np.arange(len(spike_struct.spike_trains)):
+        #     print(f"{spike_struct.labels[cell_index]} median isi: {np.round(np.median(cells_isi[cell_index]), 2)}, "
+        #           f"mean isi {np.round(np.mean(cells_isi[cell_index]), 2)}")
+
+        # nb_neurons = len(cellsinpeak)
+
+        # return a dict of list of list of neurons, representing the best clusters
+        # (as many as nth_best_clusters).
+        # the key is the K from the k-mean
+
+        data_descr = f"{subject_id} {stage_descr} sleep {bin_descr}"
+        #
+        compute_and_plot_clusters_raster_kmean_version(labels=cells_label,
+                                                       activity_threshold=activity_threshold,
+                                                       range_n_clusters_k_mean=k_means_cluster_size,
+                                                       n_surrogate_k_mean=n_surrogates_k_mean,
+                                                       k_mean_n_trials=k_mean_n_trials,
+                                                       min_n_assemblies=min_n_assemblies,
+                                                       with_shuffling=with_shuffling,
+                                                       spike_nums_to_use=spike_nums,
+                                                       cellsinpeak=cellsinpeak,
+                                                       data_descr=data_descr,
+                                                       path_results=results_path,
+                                                       keep_only_the_best=keep_only_the_best_kmean_cluster,
+                                                       sliding_window_duration=sliding_window_duration,
+                                                       SCE_times=SCE_times,
+                                                       sce_times_numbers=sce_times_numbers,
+                                                       perc_threshold=perc_threshold,
+                                                       n_surrogate_activity_threshold=
+                                                       n_surrogate_activity_threshold,
+                                                       debug_mode=verbose > 0,
+                                                       fct_to_keep_best_silhouettes=np.median,
+                                                       with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
 
 
 class CellAssembliesStruct:
@@ -410,193 +487,193 @@ class CellAssembliesStruct:
 
     def plot_assemblies_raster(self, axes_list, spike_nums, with_cells_in_cluster_seq_sorted=False, sce_times_bool=None,
                                display_only_cell_assemblies_on_raster=False):
-            # this section will order the spike_nums for display purpose
-            clustered_spike_nums = np.copy(spike_nums)
+        # this section will order the spike_nums for display purpose
+        clustered_spike_nums = np.copy(spike_nums)
 
-            cell_labels = []
-            for index in self.cells_indices:
-                cell_labels.append(self.neurons_labels[index])
-            cluster_horizontal_thresholds = []
-            cells_to_highlight = []
-            cells_to_highlight_colors = []
-            start = 0
+        cell_labels = []
+        for index in self.cells_indices:
+            cell_labels.append(self.neurons_labels[index])
+        cluster_horizontal_thresholds = []
+        cells_to_highlight = []
+        cells_to_highlight_colors = []
+        start = 0
 
-            clustered_spike_nums = clustered_spike_nums[self.cells_indices, :]
+        clustered_spike_nums = clustered_spike_nums[self.cells_indices, :]
 
-            cells_group_numbers = []
-            if len(self.n_cells_in_cell_assemblies_clusters) > 0:
-                cells_group_numbers.extend(self.n_cells_in_cell_assemblies_clusters)
-            if self.n_cells_not_in_cell_assemblies > 0:
-                cells_group_numbers.append(self.n_cells_not_in_cell_assemblies)
+        cells_group_numbers = []
+        if len(self.n_cells_in_cell_assemblies_clusters) > 0:
+            cells_group_numbers.extend(self.n_cells_in_cell_assemblies_clusters)
+        if self.n_cells_not_in_cell_assemblies > 0:
+            cells_group_numbers.append(self.n_cells_not_in_cell_assemblies)
 
-            seq_dict = dict()
-            colors_for_seq_dict = dict()
-            for group_number, group_size in enumerate(cells_group_numbers):
-                # if with_cells_in_cluster_seq_sorted and (group_size > 4):
-                #     # TODO: use code from markov_way with surrogates generation, need to be more modulable
-                #     self.param.error_rate = 0.25
-                #     self.param.max_branches = 10
-                #     self.param.time_inter_seq = 50
-                #     self.param.min_duration_intra_seq = 0
-                #     self.param.min_len_seq = 5
-                #     self.param.min_rep_nb = 3
-                #     # link_seq_categories = significant_category_dict,
-                #     # link_seq_color = colors_for_seq_list,
-                #     # link_seq_line_width = 0.8,
-                #     # link_seq_alpha = 0.9,
-                #     to_sort = clustered_spike_nums[start:start + group_size, :]
-                #     best_seq, seq_dict_tmp = sort_it_and_plot_it(spike_nums=to_sort, param=self.param,
-                #                                                  sce_times_bool=sce_times_bool,
-                #                                                  sliding_window_duration=self.sliding_window_duration,
-                #                                                  activity_threshold=self.param.activity_threshold,
-                #                                                  use_only_uniformity_method=True,
-                #                                                  save_plots=False)
-                #
-                #     # if a list of ordered_indices, the size of the list is equals to ne number of cells,
-                #     # each list correspond to the best order with this cell as the first one in the ordered seq
-                #     if best_seq is not None:
-                #         clustered_spike_nums[start:start + group_size, :] = to_sort[best_seq, :]
-                #         color = cm.nipy_spectral(float(group_number + 2) /
-                #                                  (len(self.n_cells_in_cell_assemblies_clusters) + 1))
-                #         for seq, times in seq_dict_tmp.items():
-                #             # updating the cell number to correspond to the whole raster
-                #             new_seq = tuple([cell+start for cell in seq])
-                #             seq_dict[new_seq] = times
-                #             colors_for_seq_dict[new_seq] = color
-                #
-                #         real_data_result_for_stat = SortedDict()
-                #         for key, value in seq_dict_tmp.items():
-                #             # print(f"len: {len(key)}, seq: {key}, rep: {len(value)}")
-                #             if len(key) not in real_data_result_for_stat:
-                #                 real_data_result_for_stat[len(key)] = dict()
-                #                 real_data_result_for_stat[len(key)]["rep"] = []
-                #                 real_data_result_for_stat[len(key)]["duration"] = []
-                #             real_data_result_for_stat[len(key)]["rep"].append(len(value))
-                #             list_of_durations = []
-                #             # keeping the duration of each repetition
-                #             for time_stamps in value:
-                #                 list_of_durations.append(time_stamps[-1] - time_stamps[0])
-                #             real_data_result_for_stat[len(key)]["duration"].append(list_of_durations)
-                #         results_dict = real_data_result_for_stat
-                #         file_name = f'{self.path_results}/{self.data_descr}_' \
-                #                     f'{self.n_clusters}_{group_number}_cell_assemblies_sorting_results_{self.param.time_str}.txt'
-                #
-                #         min_len = 1000
-                #         max_len = 0
-                #         with open(file_name, "w", encoding='UTF-8') as file:
-                #             for key in results_dict.keys():
-                #                 min_len = np.min((key, min_len))
-                #                 max_len = np.max((key, max_len))
-                #
-                #             # key reprensents the length of a seq
-                #             for key in np.arange(min_len, max_len + 1):
-                #                 nb_rep_seq = None
-                #                 flat_durations = None
-                #                 if key in results_dict:
-                #                     nb_rep_seq = results_dict[key]["rep"]
-                #                     durations = results_dict[key]["duration"]
-                #                     flat_durations = [item for sublist in durations for item in sublist]
-                #
-                #                 str_to_write = ""
-                #                 str_to_write += f"### Length: {key} cells \n"
-                #                 if (nb_rep_seq is not None) and (len(nb_rep_seq) > 0):
-                #
-                #                     str_to_write += f"# Real data (nb seq: {len(nb_rep_seq)}), " \
-                #                                     f"repetition: mean {np.round(np.mean(nb_rep_seq), 3)}"
-                #                     if np.std(nb_rep_seq) > 0:
-                #                         str_to_write += f", std {np.round(np.std(nb_rep_seq), 3)}"
-                #                     str_to_write += f"#, duration: " \
-                #                                     f": mean {np.round(np.mean(flat_durations), 3)}"
-                #                     if np.std(flat_durations) > 0:
-                #                         str_to_write += f", std {np.round(np.std(flat_durations), 3)}"
-                #                     str_to_write += f"\n"
-                #                 str_to_write += '\n'
-                #                 str_to_write += '\n'
-                #                 file.write(f"{str_to_write}")
+        seq_dict = dict()
+        colors_for_seq_dict = dict()
+        for group_number, group_size in enumerate(cells_group_numbers):
+            # if with_cells_in_cluster_seq_sorted and (group_size > 4):
+            #     # TODO: use code from markov_way with surrogates generation, need to be more modulable
+            #     self.param.error_rate = 0.25
+            #     self.param.max_branches = 10
+            #     self.param.time_inter_seq = 50
+            #     self.param.min_duration_intra_seq = 0
+            #     self.param.min_len_seq = 5
+            #     self.param.min_rep_nb = 3
+            #     # link_seq_categories = significant_category_dict,
+            #     # link_seq_color = colors_for_seq_list,
+            #     # link_seq_line_width = 0.8,
+            #     # link_seq_alpha = 0.9,
+            #     to_sort = clustered_spike_nums[start:start + group_size, :]
+            #     best_seq, seq_dict_tmp = sort_it_and_plot_it(spike_nums=to_sort, param=self.param,
+            #                                                  sce_times_bool=sce_times_bool,
+            #                                                  sliding_window_duration=self.sliding_window_duration,
+            #                                                  activity_threshold=self.param.activity_threshold,
+            #                                                  use_only_uniformity_method=True,
+            #                                                  save_plots=False)
+            #
+            #     # if a list of ordered_indices, the size of the list is equals to ne number of cells,
+            #     # each list correspond to the best order with this cell as the first one in the ordered seq
+            #     if best_seq is not None:
+            #         clustered_spike_nums[start:start + group_size, :] = to_sort[best_seq, :]
+            #         color = cm.nipy_spectral(float(group_number + 2) /
+            #                                  (len(self.n_cells_in_cell_assemblies_clusters) + 1))
+            #         for seq, times in seq_dict_tmp.items():
+            #             # updating the cell number to correspond to the whole raster
+            #             new_seq = tuple([cell+start for cell in seq])
+            #             seq_dict[new_seq] = times
+            #             colors_for_seq_dict[new_seq] = color
+            #
+            #         real_data_result_for_stat = SortedDict()
+            #         for key, value in seq_dict_tmp.items():
+            #             # print(f"len: {len(key)}, seq: {key}, rep: {len(value)}")
+            #             if len(key) not in real_data_result_for_stat:
+            #                 real_data_result_for_stat[len(key)] = dict()
+            #                 real_data_result_for_stat[len(key)]["rep"] = []
+            #                 real_data_result_for_stat[len(key)]["duration"] = []
+            #             real_data_result_for_stat[len(key)]["rep"].append(len(value))
+            #             list_of_durations = []
+            #             # keeping the duration of each repetition
+            #             for time_stamps in value:
+            #                 list_of_durations.append(time_stamps[-1] - time_stamps[0])
+            #             real_data_result_for_stat[len(key)]["duration"].append(list_of_durations)
+            #         results_dict = real_data_result_for_stat
+            #         file_name = f'{self.path_results}/{self.data_descr}_' \
+            #                     f'{self.n_clusters}_{group_number}_cell_assemblies_sorting_results_{self.param.time_str}.txt'
+            #
+            #         min_len = 1000
+            #         max_len = 0
+            #         with open(file_name, "w", encoding='UTF-8') as file:
+            #             for key in results_dict.keys():
+            #                 min_len = np.min((key, min_len))
+            #                 max_len = np.max((key, max_len))
+            #
+            #             # key reprensents the length of a seq
+            #             for key in np.arange(min_len, max_len + 1):
+            #                 nb_rep_seq = None
+            #                 flat_durations = None
+            #                 if key in results_dict:
+            #                     nb_rep_seq = results_dict[key]["rep"]
+            #                     durations = results_dict[key]["duration"]
+            #                     flat_durations = [item for sublist in durations for item in sublist]
+            #
+            #                 str_to_write = ""
+            #                 str_to_write += f"### Length: {key} cells \n"
+            #                 if (nb_rep_seq is not None) and (len(nb_rep_seq) > 0):
+            #
+            #                     str_to_write += f"# Real data (nb seq: {len(nb_rep_seq)}), " \
+            #                                     f"repetition: mean {np.round(np.mean(nb_rep_seq), 3)}"
+            #                     if np.std(nb_rep_seq) > 0:
+            #                         str_to_write += f", std {np.round(np.std(nb_rep_seq), 3)}"
+            #                     str_to_write += f"#, duration: " \
+            #                                     f": mean {np.round(np.mean(flat_durations), 3)}"
+            #                     if np.std(flat_durations) > 0:
+            #                         str_to_write += f", std {np.round(np.std(flat_durations), 3)}"
+            #                     str_to_write += f"\n"
+            #                 str_to_write += '\n'
+            #                 str_to_write += '\n'
+            #                 file.write(f"{str_to_write}")
 
-                if (self.n_cells_not_in_cell_assemblies > 0) and (group_number == (len(cells_group_numbers) - 1)):
-                    continue
-                if len(self.n_cells_in_cell_assemblies_clusters) == 0:
-                    continue
+            if (self.n_cells_not_in_cell_assemblies > 0) and (group_number == (len(cells_group_numbers) - 1)):
+                continue
+            if len(self.n_cells_in_cell_assemblies_clusters) == 0:
+                continue
 
-                # coloring cell assemblies
-                # color = plt.nipy_spectral(float(group_number + 1) / (len(self.n_cells_in_cell_assemblies_clusters) + 1))
-                color = BREWER_COLORS[group_number%len(BREWER_COLORS)]
-                # if group_number == 0:
-                #     color = "#64D7F7"
-                # else:
-                #     color = "#D526D7"
-                cell_indices_to_color = list(np.arange(start, start + group_size))
-                cells_to_highlight.extend(cell_indices_to_color)
-                cells_to_highlight_colors.extend([color] * len(cell_indices_to_color))
+            # coloring cell assemblies
+            # color = plt.nipy_spectral(float(group_number + 1) / (len(self.n_cells_in_cell_assemblies_clusters) + 1))
+            color = BREWER_COLORS[group_number % len(BREWER_COLORS)]
+            # if group_number == 0:
+            #     color = "#64D7F7"
+            # else:
+            #     color = "#D526D7"
+            cell_indices_to_color = list(np.arange(start, start + group_size))
+            cells_to_highlight.extend(cell_indices_to_color)
+            cells_to_highlight_colors.extend([color] * len(cell_indices_to_color))
 
-                start += group_size
+            start += group_size
 
-                if group_number < (len(cells_group_numbers) - 1):
-                    cluster_horizontal_thresholds.append(start)
+            if group_number < (len(cells_group_numbers) - 1):
+                cluster_horizontal_thresholds.append(start)
 
-            if len(cell_labels) > 100:
-                y_ticks_labels_size = 1
-            else:
-                y_ticks_labels_size = 3
-            spike_shape_size = 1
-            if len(cell_labels) > 150:
-                spike_shape_size = 0.5
-            if len(cell_labels) > 500:
-                spike_shape_size = 0.2
+        if len(cell_labels) > 100:
+            y_ticks_labels_size = 1
+        else:
+            y_ticks_labels_size = 3
+        spike_shape_size = 1
+        if len(cell_labels) > 150:
+            spike_shape_size = 0.5
+        if len(cell_labels) > 500:
+            spike_shape_size = 0.2
 
-            seq_times_to_color_dict = None
-            if with_cells_in_cluster_seq_sorted and len(seq_dict) > 0:
-                seq_times_to_color_dict = seq_dict
+        seq_times_to_color_dict = None
+        if with_cells_in_cluster_seq_sorted and len(seq_dict) > 0:
+            seq_times_to_color_dict = seq_dict
 
-            if display_only_cell_assemblies_on_raster:
-                n_cells = len(clustered_spike_nums)
-                if (self.n_cells_not_in_cell_assemblies > 0) and (self.n_cells_not_in_cell_assemblies < n_cells):
-                    n_cells_to_keep = n_cells - int(self.n_cells_not_in_cell_assemblies)
-                    clustered_spike_nums = clustered_spike_nums[:n_cells_to_keep]
-                    cell_labels = cell_labels[:n_cells_to_keep]
+        if display_only_cell_assemblies_on_raster:
+            n_cells = len(clustered_spike_nums)
+            if (self.n_cells_not_in_cell_assemblies > 0) and (self.n_cells_not_in_cell_assemblies < n_cells):
+                n_cells_to_keep = n_cells - int(self.n_cells_not_in_cell_assemblies)
+                clustered_spike_nums = clustered_spike_nums[:n_cells_to_keep]
+                cell_labels = cell_labels[:n_cells_to_keep]
 
-            colors_for_seq_list = ["blue", "red", "limegreen", "grey", "orange", "cornflowerblue", "yellow", "seagreen",
-                                   "magenta"]
-            # print(f"clustered_spike_nums.shape {clustered_spike_nums.shape}")
-            plot_raster(spike_nums=clustered_spike_nums, path_results=self.path_results,
-                        spike_train_format=False,
-                        title="",
-                        file_name=f"cell assemblies raster plot_{self.data_descr}_{self.n_clusters}_clusters",
-                        y_ticks_labels=cell_labels,
-                        y_ticks_labels_size=y_ticks_labels_size,
-                        y_ticks_labels_color="white",
-                        x_ticks_labels_color="white",
-                        activity_sum_plot_color="white",
-                        activity_sum_face_color="black",
-                        without_ticks=True,
-                        save_raster=False,
-                        show_raster=False,
-                        plot_with_amplitude=False,
-                        activity_threshold=self.activity_threshold,
-                        raster_face_color='black',
-                        cell_spikes_color='white',
-                        horizontal_lines=np.array(cluster_horizontal_thresholds) - 0.5,
-                        horizontal_lines_colors=['white'] * len(cluster_horizontal_thresholds),
-                        horizontal_lines_sytle="dashed",
-                        horizontal_lines_linewidth=[1] * len(cluster_horizontal_thresholds),
-                        span_area_coords=[self.SCE_times],
-                        span_area_colors=['white'],
-                        cells_to_highlight=cells_to_highlight,
-                        cells_to_highlight_colors=cells_to_highlight_colors,
-                        seq_times_to_color_dict=seq_times_to_color_dict,
-                        link_seq_color=colors_for_seq_list, #colors_for_seq_dict,
-                        link_seq_line_width=0.6,
-                        link_seq_alpha=0.9,
-                        jitter_links_range=5,
-                        min_len_links_seq=3,
-                        sliding_window_duration=self.sliding_window_duration,
-                        show_sum_spikes_as_percentage=True,
-                        spike_shape="o",
-                        spike_shape_size=spike_shape_size,
-                        save_formats="pdf",
-                        axes_list=axes_list,
-                        SCE_times=self.SCE_times)
+        colors_for_seq_list = ["blue", "red", "limegreen", "grey", "orange", "cornflowerblue", "yellow", "seagreen",
+                               "magenta"]
+        # print(f"clustered_spike_nums.shape {clustered_spike_nums.shape}")
+        plot_raster(spike_nums=clustered_spike_nums, path_results=self.path_results,
+                    spike_train_format=False,
+                    title="",
+                    file_name=f"cell assemblies raster plot_{self.data_descr}_{self.n_clusters}_clusters",
+                    y_ticks_labels=cell_labels,
+                    y_ticks_labels_size=y_ticks_labels_size,
+                    y_ticks_labels_color="white",
+                    x_ticks_labels_color="white",
+                    activity_sum_plot_color="white",
+                    activity_sum_face_color="black",
+                    without_ticks=True,
+                    save_raster=False,
+                    show_raster=False,
+                    plot_with_amplitude=False,
+                    activity_threshold=self.activity_threshold,
+                    raster_face_color='black',
+                    cell_spikes_color='white',
+                    horizontal_lines=np.array(cluster_horizontal_thresholds) - 0.5,
+                    horizontal_lines_colors=['white'] * len(cluster_horizontal_thresholds),
+                    horizontal_lines_sytle="dashed",
+                    horizontal_lines_linewidth=[1] * len(cluster_horizontal_thresholds),
+                    span_area_coords=[self.SCE_times],
+                    span_area_colors=['white'],
+                    cells_to_highlight=cells_to_highlight,
+                    cells_to_highlight_colors=cells_to_highlight_colors,
+                    seq_times_to_color_dict=seq_times_to_color_dict,
+                    link_seq_color=colors_for_seq_list,  # colors_for_seq_dict,
+                    link_seq_line_width=0.6,
+                    link_seq_alpha=0.9,
+                    jitter_links_range=5,
+                    min_len_links_seq=3,
+                    sliding_window_duration=self.sliding_window_duration,
+                    show_sum_spikes_as_percentage=True,
+                    spike_shape="o",
+                    spike_shape_size=spike_shape_size,
+                    save_formats="pdf",
+                    axes_list=axes_list,
+                    SCE_times=self.SCE_times)
 
     def plot_cells_vs_sce(self, ax2):
         # ############################
@@ -629,7 +706,7 @@ class CellAssembliesStruct:
             nb_cells_by_cell_ass_cluster_y_coord.append(start + (group_size / 2))
             nb_cells_by_cell_ass_cluster.append(int(group_size))
 
-            range_group = np.arange(start, start+group_size)
+            range_group = np.arange(start, start + group_size)
             for cell_id in range_group:
                 spikes_index = np.where(self.cellsinpeak_ordered[cell_id, :])[0]
                 # print(f"spikes_index {spikes_index}, self.n_sce_in_assembly[0] {self.n_sce_in_assembly[0]}")
@@ -660,7 +737,7 @@ class CellAssembliesStruct:
             bounds = [-2.5, -1.5, -0.5]
             # bounds = [-1.5, 0.5, 1.5]
             for i in np.arange(n_cell_assemblies):
-                color = BREWER_COLORS[i%len(BREWER_COLORS)]
+                color = BREWER_COLORS[i % len(BREWER_COLORS)]
                 # color = plt.nipy_spectral(float(i + 1) / (n_cell_assemblies + 1))
                 # if i == 0:
                 #     color = "#64D7F7"
@@ -736,7 +813,7 @@ class CellAssembliesStruct:
         #            color="white", linewidth=1,
         #            linestyles="dashed")
         # put a line between sce with one single cell assembly and those with multiple
-        ax2.vlines([self.n_sce_in_assembly[0]+self.n_sce_in_assembly[1]], 0,
+        ax2.vlines([self.n_sce_in_assembly[0] + self.n_sce_in_assembly[1]], 0,
                    self.n_cells - self.n_cells_not_in_cell_assemblies, color="white", linewidth=2,
                    linestyles="dashed")
         start = 0
@@ -771,7 +848,7 @@ class CellAssembliesStruct:
             #     color = "#64D7F7"
             # else:
             #     color = "#D526D7"
-            for index in np.arange(start, (start+cell_group_size)):
+            for index in np.arange(start, (start + cell_group_size)):
                 ax2.get_yticklabels()[index].set_color(color)
             start += cell_group_size
 
@@ -890,10 +967,9 @@ def surrogate_clustering(m_sces, n_clusters, n_surrogate, n_trials, perc_thresho
     """
     original_m_sces = m_sces
     surrogate_silhouettes = np.zeros(n_surrogate * n_clusters)
-    print(f"original_m_sces.shape {original_m_sces.shape}")
 
     # TODO: Increase the speed of this loop
-    print(f'Start clustering on shuffled data: {n_surrogate} surrogates, {n_trials} trials per surrogate')
+    # print(f'Start clustering on shuffled data: {n_surrogate} surrogates, {n_trials} trials per surrogate')
     for surrogate_index in np.arange(n_surrogate):
         m_sces = np.copy(original_m_sces)
         for n, sces in enumerate(m_sces):
@@ -927,9 +1003,9 @@ def surrogate_clustering(m_sces, n_clusters, n_surrogate, n_trials, perc_thresho
         index = surrogate_index * n_clusters
         surrogate_silhouettes[index:index + n_clusters] = best_silhouettes_clusters_avg
 
-    if debug_mode:
-        print(f'End of clustering on shuffled data')
-        # print(f"surrogate_silhouettes {surrogate_silhouettes}, perc_threshold {perc_threshold}")
+    # if debug_mode:
+    #     print(f'End of clustering on shuffled data')
+    # print(f"surrogate_silhouettes {surrogate_silhouettes}, perc_threshold {perc_threshold}")
     percentile_result = np.percentile(surrogate_silhouettes, perc_threshold)
     return percentile_result
 
@@ -966,8 +1042,9 @@ def _apply_kmean_on_msces_with_trials(m_sces_list):
         surrogate_silhouettes = np.hstack((surrogate_silhouettes, best_silhouettes_clusters_avg))
     return surrogate_silhouettes
 
+
 def surrogate_clustering_multi_process(m_sces, n_clusters, n_surrogate, n_trials, perc_threshold,
-                         fct_to_keep_best_silhouettes, debug_mode=False):
+                                       fct_to_keep_best_silhouettes, debug_mode=False):
     """
 
     :param m_sces: sce matrix used for the clustering after permutation
@@ -995,7 +1072,6 @@ def surrogate_clustering_multi_process(m_sces, n_clusters, n_surrogate, n_trials
     # create the multiprocessing pool
     pool = Pool(cores)
 
-
     # TODO: Increase the speed of this loop
     print(f'Start clustering on shuffled data: {n_surrogate} surrogates, {n_trials} trials per surrogate')
     m_sces_list = []
@@ -1021,6 +1097,7 @@ def surrogate_clustering_multi_process(m_sces, n_clusters, n_surrogate, n_trials
         # print(f"surrogate_silhouettes {surrogate_silhouettes}, perc_threshold {perc_threshold}")
     percentile_result = np.percentile(surrogate_silhouettes, perc_threshold)
     return percentile_result
+
 
 def clusters_on_sce_from_covnorm(cells_in_sce, range_n_clusters, fct_to_keep_best_silhouettes=np.mean,
                                  n_surrogate=1000, neurons_labels=None,
@@ -1049,27 +1126,25 @@ def clusters_on_sce_from_covnorm(cells_in_sce, range_n_clusters, fct_to_keep_bes
     best_kmeans_by_cluster = dict()
     surrogate_percentiles_by_n_cluster = dict()
     # will keep the best silhouette score (depending on the fct_to_keep_best_silhouettes) for each number of cluster
-    best_silhouette_score_by_n_cluster = np.zeros(np.max(range_n_clusters)+1)
+    best_silhouette_score_by_n_cluster = np.zeros(np.max(range_n_clusters) + 1)
     for n_clusters in range_n_clusters:
         # if debug_mode:
-        print(f"Ongoing K-mean with {n_clusters} clusters")
+        # print(f"Ongoing K-mean with {n_clusters} clusters")
         # surrogate_start_time = time.time()
         surrogate_percentile = surrogate_clustering(m_sces=m_sces, n_clusters=n_clusters,
                                                     n_surrogate=n_surrogate,
                                                     n_trials=100,
                                                     fct_to_keep_best_silhouettes=fct_to_keep_best_silhouettes,
-                                                    perc_threshold=perc_threshold_for_surrogate, debug_mode=True)
+                                                    perc_threshold=perc_threshold_for_surrogate, debug_mode=debug_mode)
         surrogate_stop_time = time.time()
         # print(" ")
         # print(f"## Time for surrogate "
         #       f"{np.round(surrogate_stop_time - surrogate_start_time, 3)} s")
         # print(" ")
 
-
-
         best_kmeans = None
         best_silhouettes = 0
-        print(f"Start clustering on data with {n_clusters} clusters: {n_trials} trials")
+        # print(f"Start clustering on data with {n_clusters} clusters: {n_trials} trials")
         for trial in np.arange(n_trials):
             kmeans = KMeans(n_clusters=n_clusters).fit(m_sces)
             cluster_labels = kmeans.labels_
@@ -1094,10 +1169,12 @@ def clusters_on_sce_from_covnorm(cells_in_sce, range_n_clusters, fct_to_keep_bes
         best_kmeans_by_cluster[n_clusters] = best_kmeans
         surrogate_percentiles_by_n_cluster[n_clusters] = surrogate_percentile
 
-        print(f"Best average silh-value: {best_silhouette_score_by_n_cluster[n_clusters]}, surr: {surrogate_percentile}")
+        print(f"For {n_clusters} clusters, "
+              f"best avg silh-value: {best_silhouette_score_by_n_cluster[n_clusters]:4f}, "
+              f"surrogate: {surrogate_percentile:4f}")
 
     return best_kmeans_by_cluster, m_sces, surrogate_percentiles_by_n_cluster, \
-        np.argmax(best_silhouette_score_by_n_cluster)
+           np.argmax(best_silhouette_score_by_n_cluster)
 
 
 def plot_silhouettes(ax0, kmeans, m_sces, n_clusters, surrogate_silhouette_avg):
@@ -1494,7 +1571,7 @@ def show_co_var_first_matrix(cells_in_peak, m_sces, n_clusters, kmeans, cluster_
             save_formats = [save_formats]
         for save_format in save_formats:
             fig.savefig(f'{path_results}/{data_str}_{n_clusters}_sce_clusters.{save_format}',
-                    format=f"{save_format}")
+                        format=f"{save_format}")
     if show_fig:
         plt.show()
         plt.close()
@@ -1764,9 +1841,9 @@ def statistical_cell_assemblies_def(cell_assemblies_struct,
         # / n_sce_clusters is to account for the inter- dependence of the comparisons (Bonferroni correction)
         th_max = r_clr[:, int(n_surrogate * (1 - (0.05 / n_sce_clusters)))]
         # if debug_mode:
-            # print(f"int(n_surrogate * (1 - 0.05 / n_sce_clusters)) {int(n_surrogate * (1 - 0.05 / n_sce_clusters))}")
-            # print(f"th_max {th_max}")
-            # print(f"cells_p[cell, :] {cells_p[cell, :]}")
+        # print(f"int(n_surrogate * (1 - 0.05 / n_sce_clusters)) {int(n_surrogate * (1 - 0.05 / n_sce_clusters))}")
+        # print(f"th_max {th_max}")
+        # print(f"cells_p[cell, :] {cells_p[cell, :]}")
         for i, cluster_id in enumerate(sce_clusters_id):
             cells_cl[i, cell] = int(cells_p[cell, i] > th_max[i])
 
@@ -1832,7 +1909,8 @@ def statistical_cell_assemblies_def(cell_assemblies_struct,
         print(f"n_assemblies_cl {n_assemblies_cl}")
     # Cell count in each cluster
     r_cl = np.zeros((n_assemblies_cl, n_sces))
-    p_cl = np.zeros((n_assemblies_cl, n_sces), dtype="uint8")  # binary matrix of sce associated to cell assembly clusters
+    p_cl = np.zeros((n_assemblies_cl, n_sces),
+                    dtype="uint8")  # binary matrix of sce associated to cell assembly clusters
 
     for i, cells in enumerate(cell_assemblies_clusters):
         r_cl[i, :] = np.sum(cellsinpeak[cells, :], axis=0)
@@ -1946,7 +2024,7 @@ def statistical_cell_assemblies_def(cell_assemblies_struct,
                 sce_indices[start:(start + len(sces_in_cluster))] = sces_in_cluster
                 if cell_assembly_cluster_id not in sces_in_cell_assemblies_clusters:
                     sces_in_cell_assemblies_clusters[cell_assembly_cluster_id] = []
-                sces_in_cell_assemblies_clusters[cell_assembly_cluster_id].\
+                sces_in_cell_assemblies_clusters[cell_assembly_cluster_id]. \
                     append((start, (start + len(sces_in_cluster))))
 
                 start += len(sces_in_cluster)
@@ -2007,34 +2085,85 @@ def statistical_cell_assemblies_def(cell_assemblies_struct,
     cas.cell_assemblies_cluster_of_multiple_ca_sce = cell_assemblies_cluster_of_multiple_ca_sce
 
 
-def compute_kmean(neurons_labels, cellsinpeak, n_surrogate, range_n_clusters, path_results,
+def compute_kmean(neurons_labels, cellsinpeak, n_surrogates_k_mean, n_trials_k_mean,
+                  min_n_assemblies,
+                  range_n_clusters, path_results,
                   sliding_window_duration, SCE_times, data_id,
                   fct_to_keep_best_silhouettes=np.mean, keep_only_the_best=True,
                   debug_mode=False):
-    start_time = time.time()
-    best_kmeans_by_cluster, m_cov_sces, surrogate_percentile, cluster_with_best_silhouette_score = \
-        clusters_on_sce_from_covnorm(cells_in_sce=cellsinpeak,
-                                     n_surrogate=n_surrogate,
-                                     fct_to_keep_best_silhouettes=fct_to_keep_best_silhouettes,
-                                     range_n_clusters=range_n_clusters,
-                                     neurons_labels=neurons_labels,
-                                     debug_mode=debug_mode)
-    stop_time = time.time()
-    print(" ")
-    print(f"## Time for clustering "
-          f"{np.round(stop_time - start_time, 3)} s")
-    print(" ")
+    """
 
+    :param neurons_labels:
+    :param cellsinpeak:
+    :param n_surrogates_k_mean: int or list of 2 int, indicate how many surrogates should be used to determine if a
+    k-mean results pass the threshold. If there are two values, then the first value indicate a low version,
+    that is tried fast to save computational time, if it passed the threshold, then the second value is run for
+    confirmation.
+    :param n_trials_k_mean: int or list of 2 int, indicate how many trial of k-mean should be run to decide which
+    cluster holds the best silhouette (the best orthogonality in a sort). It's different than finding a threshold.
+    :param min_n_assemblies: if there are two number of surrogates for kmean, this is used to try the second if the
+    minimum of assemblies has been found. The assemblies figure is also produce only if this given number is reached
+    :param range_n_clusters:
+    :param path_results:
+    :param sliding_window_duration:
+    :param SCE_times:
+    :param data_id:
+    :param fct_to_keep_best_silhouettes:
+    :param keep_only_the_best:
+    :param debug_mode:
+    :return:
+    """
+    if isinstance(n_surrogates_k_mean, int):
+        n_surrogate_k_mean = [n_surrogates_k_mean]
+
+    if isinstance(n_trials_k_mean, int):
+        n_trials_k_mean = [n_trials_k_mean]
+
+    if len(n_surrogates_k_mean) != len(n_trials_k_mean):
+        raise Exception("n_surrogates_k_mean & n_trials_k_mean should have the same length")
+
+    significant_sce_clusters = dict()
     range_n_clusters_original = range_n_clusters
-    if keep_only_the_best:
-        range_n_clusters = [cluster_with_best_silhouette_score]
 
-    # give the indices of the sce cluster for whom the silhouette is > to the 95th percentile from n_surrogate
-    # surrogates
-    significant_sce_clusters = give_significant_sce_clusters(kmeans_dict=best_kmeans_by_cluster,
-                                                             range_n_clusters=range_n_clusters,
-                                                             m_sces=m_cov_sces,
-                                                             surrogate_percentile=surrogate_percentile)
+    for n_surrogate_k_mean, n_trial_k_mean in zip(n_surrogates_k_mean, n_trials_k_mean):
+        print(" ")
+        start_time = time.time()
+        best_kmeans_by_cluster, m_cov_sces, surrogate_percentile, cluster_with_best_silhouette_score = \
+            clusters_on_sce_from_covnorm(cells_in_sce=cellsinpeak,
+                                         n_surrogate=n_surrogate_k_mean,
+                                         fct_to_keep_best_silhouettes=fct_to_keep_best_silhouettes,
+                                         range_n_clusters=range_n_clusters,
+                                         neurons_labels=neurons_labels,
+                                         debug_mode=debug_mode)
+        stop_time = time.time()
+        print(f"## Time for clustering with {n_surrogate_k_mean} surrogates & {n_trial_k_mean} "
+              f"trials on range {range_n_clusters}: "
+              f"{(stop_time - start_time):2f} s")
+        print(" ")
+
+        if keep_only_the_best:
+            range_n_clusters = [cluster_with_best_silhouette_score]
+
+        # give the indices of the sce cluster for whom the silhouette is > to the 95th percentile from n_surrogate
+        # surrogates
+        # dict with key the number of clusters and value a list with the indices of the significant cluster
+        significant_sce_clusters_tmp = give_significant_sce_clusters(kmeans_dict=best_kmeans_by_cluster,
+                                                                     range_n_clusters=range_n_clusters,
+                                                                     m_sces=m_cov_sces,
+                                                                     surrogate_percentile=surrogate_percentile)
+
+        significant_sce_clusters.update(significant_sce_clusters_tmp)
+        # then we update the clusters range for next loop or break if None are left
+        range_n_clusters = []
+        for cluster_number, significant_clusters_list in significant_sce_clusters_tmp.items():
+            if len(significant_clusters_list) >= min_n_assemblies:
+                range_n_clusters.append(cluster_number)
+
+        if len(range_n_clusters) == 0:
+            break
+
+    if not keep_only_the_best:
+        range_n_clusters = range_n_clusters_original
 
     # updating range_n_clusters
     range_n_clusters_tmp = []
@@ -2052,8 +2181,10 @@ def compute_kmean(neurons_labels, cellsinpeak, n_surrogate, range_n_clusters, pa
                                    cluster_with_best_silhouette_score=cluster_with_best_silhouette_score,
                                    path_results=path_results, neurons_labels=neurons_labels,
                                    sliding_window_duration=sliding_window_duration,
-                                   n_surrogate_k_mean=n_surrogate, SCE_times=SCE_times)
-        statistical_cell_assemblies_def(cell_assemblies_struct=cas, debug_mode=debug_mode)
+                                   n_surrogate_k_mean=n_surrogate_k_mean, SCE_times=SCE_times)
+        start_time = time.time()
+        statistical_cell_assemblies_def(cell_assemblies_struct=cas, debug_mode=debug_mode, n_surrogate=1000)
+        stop_time = time.time()
         cell_assemblies_struct_dict[n_cluster] = cas
 
     # will contains as value list of int (corresponding to sce cluster label, -1 if no sce cluster), the len of
@@ -2070,11 +2201,12 @@ def compute_kmean(neurons_labels, cellsinpeak, n_surrogate, range_n_clusters, pa
                                             significant_clusters=significant_sce_clusters[n_cluster])
 
     return range_n_clusters, best_kmeans_by_cluster, m_cov_sces, cluster_labels_for_neurons, surrogate_percentile, \
-        significant_sce_clusters, cluster_with_best_silhouette_score, cell_assemblies_struct_dict
+           significant_sce_clusters, cluster_with_best_silhouette_score, cell_assemblies_struct_dict
 
 
 def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, range_n_clusters_k_mean,
-                                                   n_surrogate_k_mean,
+                                                   n_surrogate_k_mean, k_mean_n_trials,
+                                                   min_n_assemblies,
                                                    spike_nums_to_use, cellsinpeak, data_descr,
                                                    path_results,
                                                    sliding_window_duration, sce_times_numbers,
@@ -2087,9 +2219,42 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
                                                    fct_to_keep_best_silhouettes=np.mean,
                                                    save_co_var_kmean_plot=False,
                                                    save_stat_kmean=False):
+    """
+
+    :param labels:
+    :param activity_threshold:
+    :param range_n_clusters_k_mean:
+    :param n_surrogate_k_mean: int or list of 2 int, indicate how many surrogates should be used to determine if a
+    k-mean results pass the threshold. If there are two values, then the first value indicate a low version,
+    that is tried fast to save computational time, if it passed the threshold, then the second value is run for
+    confirmation.
+    :param k_mean_n_trials: int or list of 2 int, indicate how many trial of k-mean should be run to decide which
+    cluster holds the best silhouette (the best orthogonality in a sort). It's different than finding a threshold.
+    :param min_n_assemblies: if there are two number of surrogates for kmean, this is used to try the second if the
+    minimum of assemblies has been found. The assemblies figure is also produce only if this given number is reached
+    :param spike_nums_to_use:
+    :param cellsinpeak:
+    :param data_descr:
+    :param path_results:
+    :param sliding_window_duration:
+    :param sce_times_numbers:
+    :param SCE_times:
+    :param perc_threshold:
+    :param n_surrogate_activity_threshold:
+    :param with_shuffling:
+    :param sce_times_bool:
+    :param debug_mode:
+    :param keep_only_the_best:
+    :param with_cells_in_cluster_seq_sorted:
+    :param fct_to_keep_best_silhouettes:
+    :param save_co_var_kmean_plot:
+    :param save_stat_kmean:
+    :return:
+    """
     start_time = time.time()
     results = compute_kmean(data_id=data_descr, neurons_labels=labels, cellsinpeak=cellsinpeak,
-                            n_surrogate=n_surrogate_k_mean, path_results=path_results,
+                            n_surrogates_k_mean=n_surrogate_k_mean, n_trials_k_mean=k_mean_n_trials,
+                            path_results=path_results, min_n_assemblies=min_n_assemblies,
                             range_n_clusters=range_n_clusters_k_mean,
                             fct_to_keep_best_silhouettes=fct_to_keep_best_silhouettes,
                             debug_mode=debug_mode, keep_only_the_best=keep_only_the_best,
@@ -2110,7 +2275,7 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
         print(f"Best number of clusters: {cluster_with_best_silhouette_score}")
         range_n_clusters_k_mean = [cluster_with_best_silhouette_score]
 
-    start_time_cas_plot = time.time()
+    # start_time_cas_plot = time.time()
     data_descr_backup = data_descr
     for n_cluster in range_n_clusters_k_mean:
         cas = cas_dict[n_cluster]
@@ -2126,7 +2291,7 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
         cas.sliding_window_duration = sliding_window_duration
 
         # plot only if cell assembly exists
-        if len(cas.n_cells_in_cell_assemblies_clusters ) > 0:
+        if len(cas.n_cells_in_cell_assemblies_clusters) > 0:
             cas.plot_cell_assemblies(data_descr=data_descr, spike_nums=spike_nums_to_use,
                                      SCE_times=SCE_times, activity_threshold=activity_threshold,
                                      with_cells_in_cluster_seq_sorted=False,
@@ -2134,17 +2299,17 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
                                      save_formats=['pdf', 'png'])  # "pdf"
 
         cas.save_data_on_file(n_clusters=n_cluster)
+    #
+    # stop_time_cas_plot = time.time()
+    # print(f"Time to plot cas plot  "
+    #       f"{(stop_time_cas_plot - start_time_cas_plot):3f} s")
 
-    stop_time_cas_plot = time.time()
-    print(f"Time to plot cas plot  "
-              f"{(stop_time_cas_plot - start_time_cas_plot):3f} s")
-
-        # TODO: see while plotting twice cell_assemblies make it bug
+    # TODO: see while plotting twice cell_assemblies make it bug
     if with_cells_in_cluster_seq_sorted:
         cas.plot_cell_assemblies(data_descr=data_descr + "_seq", spike_nums=spike_nums_to_use,
-                                     SCE_times=SCE_times, activity_threshold=activity_threshold,
-                                     with_cells_in_cluster_seq_sorted=True,
-                                     sce_times_bool=sce_times_bool)
+                                 SCE_times=SCE_times, activity_threshold=activity_threshold,
+                                 with_cells_in_cluster_seq_sorted=True,
+                                 sce_times_bool=sce_times_bool)
     if save_co_var_kmean_plot:
         # this section will order the spike_nums for display purpose
         clustered_spike_nums = np.copy(spike_nums_to_use)
@@ -2258,8 +2423,6 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
         print(f"Time to plot kmean & co_var  "
               f"{np.round(stop_time_co_var - start_time_co_var, 3)} s")
 
-
-
     # do_cluster_activations_computing(cas)
     # TODO: See to improve the outputs
     if save_stat_kmean:
@@ -2276,4 +2439,3 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
     # stop_time = time.time()
     # print(f"Time to compute_and_plot_clusters_raster_kmean_version "
     #       f"{np.round(stop_time - start_time, 3)} s")
-

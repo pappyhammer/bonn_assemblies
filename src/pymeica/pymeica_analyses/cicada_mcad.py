@@ -109,6 +109,10 @@ class CicadaMcad(CicadaAnalysis):
 
         side_to_analyse = kwargs["side_to_analyse"]
 
+        # in second
+        max_size_chunk_in_sec = 180
+        min_size_chunk_in_sec = 30
+
         n_sessions = len(self._data_to_analyse)
         session_data = self._data_to_analyse[0]
         session_data.descriptive_stats()
@@ -116,19 +120,37 @@ class CicadaMcad(CicadaAnalysis):
         verbose = 0
 
         session_identifier = session_data.identifier
-        print(f"-------------- {session_identifier} -------------- ")
+        print("-" * 50)
+        print(f"----------------- {session_identifier} ----------------- ")
+        print("-" * 50)
 
         if all_data_by_sleep_stages:
             sleep_stages_selected = np.arange(len(session_data.sleep_stages))
-        # TODO: update progress bar
-        # TODO: Add arguments in widgets
+
+        # in sec
+        total_time_over_stages = 0
+        # compute how much time is in all sleep stage so we update the progress bar accordingly
         for sleep_stage in sleep_stages_selected:
             if all_data_by_sleep_stages:
                 sleep_stage_index = sleep_stage
             else:
                 # then it's a string describing the sleep stage and we convert it in integer.
                 sleep_stage_index = self.sleep_stage_selection_to_index[sleep_stage]
+            total_time_over_stages += session_data.sleep_stages[sleep_stage_index].duration_sec
 
+        # TODO: Add arguments in widgets
+        # TODO:; see to split sleep stages by number of SCEs
+        for sleep_stage in sleep_stages_selected:
+            if all_data_by_sleep_stages:
+                sleep_stage_index = sleep_stage
+            else:
+                # then it's a string describing the sleep stage and we convert it in integer.
+                sleep_stage_index = self.sleep_stage_selection_to_index[sleep_stage]
+            print(" ")
+            print("-"*50)
+            print(f"Cicada MCAD: {side_to_analyse} side, sleep stage index {sleep_stage_index}, "
+                  f"{session_data.sleep_stages[sleep_stage_index].duration_sec} sec")
+            print("-"*50)
             spike_struct = session_data.construct_spike_structure(sleep_stage_indices=[sleep_stage_index],
                                                                   channels_starting_by=[side_to_analyse],
                                                                   keeping_only_SU=not use_su_and_mu)
@@ -137,14 +159,22 @@ class CicadaMcad(CicadaAnalysis):
 
             mcad_main(stage_descr=stage_descr, results_path=self.get_results_path(),
                       k_means_cluster_size=np.arange(3, 4),
-                      n_surrogate_k_mean=10,
+                      n_surrogates_k_mean=(5, 20),
+                      k_mean_n_trials=(10, 50),
                       spike_trains_binsize=25,
+                      max_size_chunk_in_sec=max_size_chunk_in_sec,
+                      min_size_chunk_in_sec=min_size_chunk_in_sec,
                       spike_trains=spike_struct.spike_trains, cells_label=spike_struct.labels,
                       subject_id=session_identifier,
                       remove_high_firing_cells=True,
                       n_surrogate_activity_threshold=500, perc_threshold=95, verbose=verbose,
                       firing_rate_threshold=5)
 
-        self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
+            self.update_progressbar(time_started=self.analysis_start_time,
+                                    increment_value=
+                                    (session_data.sleep_stages[sleep_stage_index].duration_sec /
+                                     total_time_over_stages)*100)
+
+        self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)
 
         print(f"MCAD analysis run in {time() - self.analysis_start_time} sec")
