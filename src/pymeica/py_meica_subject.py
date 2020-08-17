@@ -91,7 +91,7 @@ class SleepStage:
         # result += f"start_time  {self.start_time}, "
         # result += f"stop_time  {self.stop_time}, \n"
         # result += f"duration (usec)  {self.duration}, "
-        result += f"duration: {self.duration_sec:1f} sec, {(self.duration / 1000000) / 60:1f} min"
+        result += f"duration: {self.duration_sec:.1f} sec, {(self.duration / 1000000) / 60:.1f} min"
         # result += f",\n conversion_datetime  {self.conversion_datetime}, "
         # result += f"conversion_timestamp  {self.conversion_timestamp}, "
         return result

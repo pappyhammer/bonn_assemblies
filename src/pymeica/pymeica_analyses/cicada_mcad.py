@@ -109,9 +109,9 @@ class CicadaMcad(CicadaAnalysis):
 
         side_to_analyse = kwargs["side_to_analyse"]
 
-        # in second
-        max_size_chunk_in_sec = 180
-        min_size_chunk_in_sec = 30
+        # in second, used to split the sleep stages in chunks
+        max_size_chunk_in_sec = 120
+        min_size_chunk_in_sec = 40
 
         n_sessions = len(self._data_to_analyse)
         session_data = self._data_to_analyse[0]
@@ -159,15 +159,16 @@ class CicadaMcad(CicadaAnalysis):
 
             mcad_main(stage_descr=stage_descr, results_path=self.get_results_path(),
                       k_means_cluster_size=np.arange(3, 4),
-                      n_surrogates_k_mean=(5, 20),
-                      k_mean_n_trials=(10, 50),
+                      n_surrogates_k_mean=(10, 40),
+                      k_mean_n_trials=(5, 25),
                       spike_trains_binsize=25,
                       max_size_chunk_in_sec=max_size_chunk_in_sec,
                       min_size_chunk_in_sec=min_size_chunk_in_sec,
                       spike_trains=spike_struct.spike_trains, cells_label=spike_struct.labels,
                       subject_id=session_identifier,
                       remove_high_firing_cells=True,
-                      n_surrogate_activity_threshold=500, perc_threshold=95, verbose=verbose,
+                      n_surrogate_activity_threshold=500, perc_threshold_for_sce=95, verbose=verbose,
+                      perc_threshold_for_kmean_surrogates=99,
                       firing_rate_threshold=5)
 
             self.update_progressbar(time_started=self.analysis_start_time,
