@@ -8,6 +8,7 @@ import quantities as pq
 import os
 import elephant.conversion as elephant_conv
 import time
+import yaml
 
 import multiprocessing as mp
 from pathos.multiprocessing import ProcessingPool as Pool
@@ -41,7 +42,7 @@ def mcad_main(stage_descr, results_path,
               spike_trains, cells_label, subject_id,
               remove_high_firing_cells,
               n_surrogate_activity_threshold, perc_threshold_for_sce, verbose,
-              perc_threshold_for_kmean_surrogates,
+              perc_threshold_for_kmean_surrogates, params_to_save_dict,
               firing_rate_threshold=5,
               min_n_assemblies=1):
     """
@@ -58,6 +59,8 @@ def mcad_main(stage_descr, results_path,
     :param min_n_assemblies: if there are two number of surrogates for kmean, this is used to try the second if the
     minimum of assemblies has been found. The assemblies figure is also produce only if this given number is reached
     :param spike_trains_binsize:
+    :param params_to_save_dict: (dict) params to save in the yaml file, key represent the param id, value its value
+    should be simple variable type (list, int, float, str), avoid tuples
     :param spike_trains:
     :param cells_label:
     :param subject_id:
@@ -68,6 +71,7 @@ def mcad_main(stage_descr, results_path,
     :param firing_rate_threshold:
     :return:
     """
+
     # ------------------------ params ------------------------
     with_cells_in_cluster_seq_sorted = False
     # kmean clustering
@@ -179,7 +183,6 @@ def mcad_main(stage_descr, results_path,
                                                                 max_size_chunk_in_bins]
             spike_nums_to_process.append(spike_nums_chunk)
             first_and_last_bins.append([index_bin, index_bin + max_size_chunk_in_bins - 1])
-        # print(f"first_and_last_bins {first_and_last_bins}")
     else:
         spike_nums_to_process = [spike_nums]
         first_and_last_bins.append([0, n_bins_in_spike_nums - 1])
@@ -193,6 +196,8 @@ def mcad_main(stage_descr, results_path,
             print(f"Processing chunk from bin {first_bin_index} to {last_bin_index}")
 
         bin_descr = f"bins_{first_bin_index}_{last_bin_index}"
+        params_to_save_dict.update({"first_bin_index": first_bin_index})
+        params_to_save_dict.update({"last_bin_index": last_bin_index})
 
         activity_threshold = get_sce_detection_threshold(spike_nums=spike_nums,
                                                          window_duration=sliding_window_duration,
@@ -263,6 +268,7 @@ def mcad_main(stage_descr, results_path,
         # the key is the K from the k-mean
 
         data_descr = f"{subject_id} {stage_descr} sleep {bin_descr}"
+
         #
         compute_and_plot_clusters_raster_kmean_version(labels=cells_label,
                                                        activity_threshold=activity_threshold,
@@ -284,6 +290,7 @@ def mcad_main(stage_descr, results_path,
                                                        perc_threshold_for_kmean_surrogates,
                                                        n_surrogate_activity_threshold=
                                                        n_surrogate_activity_threshold,
+                                                       params_to_save_dict=params_to_save_dict,
                                                        debug_mode=verbose > 0,
                                                        fct_to_keep_best_silhouettes=np.median,
                                                        with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
@@ -351,6 +358,105 @@ class CellAssembliesStruct:
         self.sces_in_cell_assemblies_clusters = None
         # key is a int representing a sce, and value a list representing the id of cell assemblies cluster
         self.cell_assemblies_cluster_of_multiple_ca_sce = None
+
+    def save_data_on_yaml_file(self, n_clusters, params_to_save_dict):
+        """
+        Save clustering results and params used
+        :param n_clusters:
+        :param params_to_save_dict:
+        :return:
+        """
+        file_name = os.path.join(self.path_results, f'{self.data_id}_{n_clusters}_mcad.yaml')
+
+        mcad_data_dict = dict()
+
+        # adding params such as for example 'subject_id', bin size...
+        mcad_data_dict.update(params_to_save_dict)
+
+        mcad_data_dict['n_clusters'] = self.n_clusters
+
+        mcad_data_dict['n_surrogate_k_mean'] = self.n_surrogate_k_mean
+        mcad_data_dict['activity_threshold'] = self.activity_threshold
+        mcad_data_dict['silhouette_score'] = self.silhouette_score
+
+        mcad_data_dict['n_cell_assemblies'] = len(self.n_cells_in_cell_assemblies_clusters)
+
+        if len(self.n_cells_in_cell_assemblies_clusters) > 0:
+            # single cell assemblies
+            mcad_data_dict['single_cell_assemblies'] = dict()
+            start = 0
+            for cluster_id, n_cells in enumerate(self.n_cells_in_cell_assemblies_clusters):
+                stop = start + n_cells
+                mcad_data_dict['single_cell_assemblies'][cluster_id] = self.cells_indices[start:stop]
+                start = stop
+
+            # MCA_SE: multiple cell-assembly synchronous events
+            # for synchronous event (define by the first and last frame indices) we give the id the single
+            # cell assemblies that compose it
+            for sce_id, ca_ids in self.cell_assemblies_cluster_of_multiple_ca_sce.items():
+                if 'multiple_cell_assemblies_synchronous_events' not in mcad_data_dict:
+                    mcad_data_dict['multiple_cell_assemblies'] = dict()
+                mcad_data_dict['multiple_cell_assemblies'][f"{self.SCE_times[sce_id][0]}-{self.SCE_times[sce_id][1]}"] = \
+                    list(ca_ids)
+
+                # then we save the times in bin (first and last of each synchronous event) by cell assemblies
+                # first single cell assemblies, then multiple cell assemblies
+                n_sces_not_in_ca = self.n_sce_in_assembly[0]
+                n_sces_so_far = 0
+                start_index = n_sces_not_in_ca + n_sces_so_far
+                for ca_id, sces_indices_tuple in self.sces_in_cell_assemblies_clusters.items():
+                    n_sces = sces_indices_tuple[0][1] - sces_indices_tuple[0][0]
+                    last_index = start_index + n_sces
+                    if 'single_se_in_ca' not in mcad_data_dict:
+                        mcad_data_dict['single_se_in_ca'] = dict()
+                    mcad_data_dict['single_se_in_ca'][ca_id] = []
+
+                    for i, index_sce_period in enumerate(self.sce_indices[start_index:last_index]):
+                        sce_period = self.SCE_times[int(index_sce_period)]
+                        mcad_data_dict['single_se_in_ca'][ca_id].append([sce_period[0], sce_period[1]])
+                    start_index += n_sces
+
+                if len(self.cell_assemblies_cluster_of_multiple_ca_sce) > 0:
+                    sce_ids = np.array(list(self.cell_assemblies_cluster_of_multiple_ca_sce.keys()))
+                    mcad_data_dict['multiple_se_in_ca'] = []
+
+                    for i, index_sce_period in enumerate(sce_ids):
+                        sce_period = self.SCE_times[index_sce_period]
+                        mcad_data_dict['multiple_se_in_ca'].append([sce_period[0], sce_period[1]])
+
+                # we want to save for each cell at which times it is active in a cell_assembly,
+                # if part of a cell assembly
+                start = 0
+                mcad_data_dict['cells'] = dict()
+                for cluster_id, n_cells in enumerate(self.n_cells_in_cell_assemblies_clusters):
+                    stop = start + n_cells
+                    for cell in self.cells_indices[start:stop]:
+                        n_sces_not_in_ca = self.n_sce_in_assembly[0]
+                        n_sces_so_far = 0
+                        start_index = n_sces_not_in_ca + n_sces_so_far
+                        if cell not in mcad_data_dict['cells']:
+                            mcad_data_dict['cells'][cell] = []
+
+                        for ca_id, sces_indices_tuple in self.sces_in_cell_assemblies_clusters.items():
+                            n_sces = sces_indices_tuple[0][1] - sces_indices_tuple[0][0]
+                            last_index = start_index + n_sces
+                            if ca_id != cluster_id:
+                                start_index += n_sces
+                                continue
+
+                            for i, index_sce_period in enumerate(self.sce_indices[start_index:last_index]):
+                                if self.cellsinpeak[cell, index_sce_period] == 0:
+                                    # print(f"Clustering: Cell {cell} not in sce_index {index_sce_period}")
+                                    continue
+                                sce_period = self.SCE_times[int(index_sce_period)]
+                                mcad_data_dict['cells'][cell].append([sce_period[0], sce_period[1]])
+
+                            start_index += n_sces
+
+                    start = stop
+
+        with open(file_name, 'w') as outfile:
+            yaml.dump(mcad_data_dict, outfile, default_flow_style=False)
 
     def save_data_on_file(self, n_clusters):
         file_name = f'{self.path_results}/{self.data_id}_{n_clusters}_clusters_cell_assemblies_data.txt'
@@ -2162,7 +2268,7 @@ def compute_kmean(neurons_labels, cellsinpeak, n_surrogates_k_mean, n_trials_k_m
         print(" ")
         start_time = time.time()
         best_kmeans_by_cluster, m_cov_sces, surrogate_percentile, \
-        best_silhouette_score_by_n_cluster, cluster_with_best_silhouette_score  = \
+        best_silhouette_score_by_n_cluster, cluster_with_best_silhouette_score = \
             clusters_on_sce_from_covnorm(cells_in_sce=cellsinpeak,
                                          n_surrogate=n_surrogate_k_mean,
                                          fct_to_keep_best_silhouettes=fct_to_keep_best_silhouettes,
@@ -2254,6 +2360,7 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
                                                    SCE_times, perc_threshold_for_sce,
                                                    n_surrogate_activity_threshold,
                                                    perc_threshold_for_kmean_surrogates,
+                                                   params_to_save_dict,
                                                    with_shuffling=True,
                                                    sce_times_bool=None,
                                                    debug_mode=False, keep_only_the_best=True,
@@ -2275,6 +2382,8 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
     :param min_n_assemblies: if there are two number of surrogates for kmean, this is used to try the second if the
     minimum of assemblies has been found. The assemblies figure is also produce only if this given number is reached
     :param spike_nums_to_use:
+    :param params_to_save_dict: (dict) params to save in the yaml file, key represent the param id, value its value
+    should be simple variable type (list, int, float, str), avoid tuples
     :param cellsinpeak:
     :param data_descr:
     :param path_results:
@@ -2344,6 +2453,7 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
         # TODO: See to improve the outputs
         # TODO: Add the avg silhouette of cluster
         cas.save_data_on_file(n_clusters=n_cluster)
+        cas.save_data_on_yaml_file(n_clusters=n_cluster, params_to_save_dict=params_to_save_dict)
         #
         # stop_time_cas_plot = time.time()
         # print(f"Time to plot cas plot  "
