@@ -56,6 +56,19 @@ class CicadaMcad(CicadaAnalysis):
         """
         CicadaAnalysis.set_arguments_for_gui(self)
 
+        session_data = self._data_to_analyse[0]
+        sleep_stages = session_data.sleep_stages
+        sleep_stages_description = [f"{ss.number} - stage {ss.sleep_stage} - {ss.duration_sec} sec "
+                                    for ss in sleep_stages]
+        # print(f"sleep_stages_description {sleep_stages_description}")
+        for ss_index, ss in enumerate(sleep_stages_description):
+            self.sleep_stage_selection_to_index[ss] = ss_index
+        self.add_choices_arg_for_gui(arg_name="sleep_stages_selected", choices=sleep_stages_description,
+                                     default_value=sleep_stages_description[0],
+                                     short_description="Sleep stages to analyse",
+                                     multiple_choices=True,
+                                     family_widget="sleep_stages")
+
         self.add_bool_option_for_gui(arg_name="use_su_and_mu", true_by_default=True,
                                      short_description="Use SU & MU",
                                      long_description="If not checked, only SU will be used",
@@ -69,6 +82,13 @@ class CicadaMcad(CicadaAnalysis):
                                         short_description="Bin size for spike trains (in ms)",
                                         default_value=25, family_widget="data_params")
 
+        # TODO: Add in long description the number of units on each side
+        self.add_choices_arg_for_gui(arg_name="side_to_analyse", choices=["L", "R"],
+                                     default_value="L",
+                                     short_description="Side to analyse",
+                                     multiple_choices=False,
+                                     family_widget="data_params")
+
         self.add_int_values_arg_for_gui(arg_name="min_n_clusters", min_value=2, max_value=20,
                                         short_description="Minimum number of cell assemblies",
                                         long_description="A range from min to max number of cell assemblies "
@@ -79,6 +99,32 @@ class CicadaMcad(CicadaAnalysis):
         self.add_int_values_arg_for_gui(arg_name="max_n_clusters", min_value=2, max_value=20,
                                         short_description="Maximum number of cell assemblies",
                                         default_value=2, family_widget="kmeans_params")
+
+        self.add_int_values_arg_for_gui(arg_name="n_surrogates_k_mean_1st_try", min_value=5, max_value=100,
+                                        short_description="N surrogates for kmean on 1st try",
+                                        default_value=10, family_widget="kmeans_params")
+
+        self.add_int_values_arg_for_gui(arg_name="n_surrogates_k_mean_2nd_try", min_value=5, max_value=1000,
+                                        short_description="N surrogates for kmean on 2nd try",
+                                        default_value=40, family_widget="kmeans_params")
+
+        self.add_int_values_arg_for_gui(arg_name="k_mean_n_trials_1st_try", min_value=2, max_value=100,
+                                        short_description="N trials for kmean on 1st try",
+                                        default_value=5, family_widget="kmeans_params")
+
+        self.add_int_values_arg_for_gui(arg_name="k_mean_n_trials_2nd_try", min_value=2, max_value=200,
+                                        short_description="N trials for kmean on 2nd try",
+                                        default_value=25, family_widget="kmeans_params")
+
+        self.add_bool_option_for_gui(arg_name="apply_two_steps_k_mean", true_by_default=True,
+                                     short_description="Apply kmeans in two steps",
+                                     long_description="If True, a first set of parameter is applied to kmeans, "
+                                                      "if significant clusters are found, then a second set is applied "
+                                                      "and this results is kept. The second parameters "
+                                                      "should be higher. "
+                                                      "The idea is to save computational time. If false, the 2nd try "
+                                                      "values are the ones used.",
+                                     family_widget="kmeans_params")
 
         self.add_int_values_arg_for_gui(arg_name="n_surrogate_activity_threshold", min_value=100, max_value=5000,
                                         short_description="N surrogates to compute synchronous activity threshold",
@@ -97,24 +143,7 @@ class CicadaMcad(CicadaAnalysis):
                                         short_description="Firing rate (Hz) threshold",
                                         default_value=5, family_widget="firing_rate")
 
-        session_data = self._data_to_analyse[0]
-        sleep_stages = session_data.sleep_stages
-        sleep_stages_description = [f"{ss.number} - stage {ss.sleep_stage} - {ss.duration_sec} sec "
-                                    for ss in sleep_stages]
-        # print(f"sleep_stages_description {sleep_stages_description}")
-        for ss_index, ss in enumerate(sleep_stages_description):
-            self.sleep_stage_selection_to_index[ss] = ss_index
-        self.add_choices_arg_for_gui(arg_name="sleep_stages_selected", choices=sleep_stages_description,
-                                     default_value=sleep_stages_description[0],
-                                     short_description="Sleep stages to analyse",
-                                     multiple_choices=True,
-                                     family_widget="data_params")
-        # TODO: Add in long description the number of units on each side
-        self.add_choices_arg_for_gui(arg_name="side_to_analyse", choices=["L", "R"],
-                                     default_value="L",
-                                     short_description="Side to analyse",
-                                     multiple_choices=False,
-                                     family_widget="data_params")
+
 
     def update_original_data(self):
         """
@@ -152,6 +181,21 @@ class CicadaMcad(CicadaAnalysis):
 
         remove_high_firing_cells = kwargs.get("remove_high_firing_cells", True)
         firing_rate_threshold = kwargs.get("firing_rate_threshold", 5)
+
+        apply_two_steps_k_mean = kwargs.get("apply_two_steps_k_mean", True)
+
+        n_surrogates_k_mean_1st_try = kwargs.get("n_surrogates_k_mean_1st_try", 10)
+        n_surrogates_k_mean_2nd_try = kwargs.get("n_surrogates_k_mean_2nd_try", 40)
+
+        k_mean_n_trials_1st_try = kwargs.get("k_mean_n_trials_1st_try", 5)
+        k_mean_n_trials_2nd_try = kwargs.get("k_mean_n_trials_2nd_try", 25)
+
+        if apply_two_steps_k_mean:
+            n_surrogates_k_mean = (n_surrogates_k_mean_1st_try, n_surrogates_k_mean_2nd_try)
+            k_mean_n_trials = (k_mean_n_trials_1st_try, k_mean_n_trials_2nd_try)
+        else:
+            n_surrogates_k_mean = n_surrogates_k_mean_2nd_try
+            k_mean_n_trials = k_mean_n_trials_2nd_try
 
         # in second, used to split the sleep stages in chunks
         max_size_chunk_in_sec = 120
@@ -206,14 +250,14 @@ class CicadaMcad(CicadaAnalysis):
             params_to_save_dict["subject_id"] = session_identifier
             params_to_save_dict["spike_trains_bin_size"] = spike_trains_bin_size
             params_to_save_dict["side"] = side_to_analyse
-            params_to_save_dict["sleep_stage_name"] = session_data.sleep_stages[sleep_stage_index].sleep_stage
+            params_to_save_dict["sleep_stage_name"] = str(session_data.sleep_stages[sleep_stage_index].sleep_stage)
             params_to_save_dict["sleep_stage_index"] = sleep_stage_index
 
             # TODO: Add arguments in widgets
             mcad_main(stage_descr=stage_descr, results_path=self.get_results_path(),
                       k_means_cluster_size=k_means_cluster_size,
-                      n_surrogates_k_mean=(10, 40),
-                      k_mean_n_trials=(5, 25),
+                      n_surrogates_k_mean=n_surrogates_k_mean,
+                      k_mean_n_trials=k_mean_n_trials,
                       spike_trains_binsize=spike_trains_bin_size,
                       max_size_chunk_in_sec=max_size_chunk_in_sec,
                       min_size_chunk_in_sec=min_size_chunk_in_sec,

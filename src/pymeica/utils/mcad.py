@@ -373,11 +373,11 @@ class CellAssembliesStruct:
         # adding params such as for example 'subject_id', bin size...
         mcad_data_dict.update(params_to_save_dict)
 
-        mcad_data_dict['n_clusters'] = self.n_clusters
+        mcad_data_dict['n_clusters'] = int(self.n_clusters)
 
         mcad_data_dict['n_surrogate_k_mean'] = self.n_surrogate_k_mean
-        mcad_data_dict['activity_threshold'] = self.activity_threshold
-        mcad_data_dict['silhouette_score'] = self.silhouette_score
+        mcad_data_dict['activity_threshold'] = int(self.activity_threshold)
+        mcad_data_dict['silhouette_score'] = float(self.silhouette_score)
 
         mcad_data_dict['n_cell_assemblies'] = len(self.n_cells_in_cell_assemblies_clusters)
 
@@ -387,7 +387,7 @@ class CellAssembliesStruct:
             start = 0
             for cluster_id, n_cells in enumerate(self.n_cells_in_cell_assemblies_clusters):
                 stop = start + n_cells
-                mcad_data_dict['single_cell_assemblies'][cluster_id] = self.cells_indices[start:stop]
+                mcad_data_dict['single_cell_assemblies'][int(cluster_id)] = [int(c) for c in self.cells_indices[start:stop]]
                 start = stop
 
             # MCA_SE: multiple cell-assembly synchronous events
@@ -397,7 +397,7 @@ class CellAssembliesStruct:
                 if 'multiple_cell_assemblies_synchronous_events' not in mcad_data_dict:
                     mcad_data_dict['multiple_cell_assemblies'] = dict()
                 mcad_data_dict['multiple_cell_assemblies'][f"{self.SCE_times[sce_id][0]}-{self.SCE_times[sce_id][1]}"] = \
-                    list(ca_ids)
+                    [int(i) for i in ca_ids]
 
                 # then we save the times in bin (first and last of each synchronous event) by cell assemblies
                 # first single cell assemblies, then multiple cell assemblies
@@ -409,11 +409,11 @@ class CellAssembliesStruct:
                     last_index = start_index + n_sces
                     if 'single_se_in_ca' not in mcad_data_dict:
                         mcad_data_dict['single_se_in_ca'] = dict()
-                    mcad_data_dict['single_se_in_ca'][ca_id] = []
+                    mcad_data_dict['single_se_in_ca'][int(ca_id)] = []
 
                     for i, index_sce_period in enumerate(self.sce_indices[start_index:last_index]):
                         sce_period = self.SCE_times[int(index_sce_period)]
-                        mcad_data_dict['single_se_in_ca'][ca_id].append([sce_period[0], sce_period[1]])
+                        mcad_data_dict['single_se_in_ca'][int(ca_id)].append([sce_period[0], sce_period[1]])
                     start_index += n_sces
 
                 if len(self.cell_assemblies_cluster_of_multiple_ca_sce) > 0:
@@ -422,41 +422,41 @@ class CellAssembliesStruct:
 
                     for i, index_sce_period in enumerate(sce_ids):
                         sce_period = self.SCE_times[index_sce_period]
-                        mcad_data_dict['multiple_se_in_ca'].append([sce_period[0], sce_period[1]])
+                        mcad_data_dict['multiple_se_in_ca'].append([int(sce_period[0]), int(sce_period[1])])
 
-                # we want to save for each cell at which times it is active in a cell_assembly,
-                # if part of a cell assembly
-                start = 0
-                mcad_data_dict['cells'] = dict()
-                for cluster_id, n_cells in enumerate(self.n_cells_in_cell_assemblies_clusters):
-                    stop = start + n_cells
-                    for cell in self.cells_indices[start:stop]:
-                        n_sces_not_in_ca = self.n_sce_in_assembly[0]
-                        n_sces_so_far = 0
-                        start_index = n_sces_not_in_ca + n_sces_so_far
-                        if cell not in mcad_data_dict['cells']:
-                            mcad_data_dict['cells'][cell] = []
+            # we want to save for each cell at which times it is active in a cell_assembly,
+            # if part of a cell assembly
+            start = 0
+            mcad_data_dict['cells'] = dict()
+            for cluster_id, n_cells in enumerate(self.n_cells_in_cell_assemblies_clusters):
+                stop = start + n_cells
+                for cell in self.cells_indices[start:stop]:
+                    n_sces_not_in_ca = self.n_sce_in_assembly[0]
+                    n_sces_so_far = 0
+                    start_index = n_sces_not_in_ca + n_sces_so_far
+                    if cell not in mcad_data_dict['cells']:
+                        mcad_data_dict['cells'][int(cell)] = []
 
-                        for ca_id, sces_indices_tuple in self.sces_in_cell_assemblies_clusters.items():
-                            n_sces = sces_indices_tuple[0][1] - sces_indices_tuple[0][0]
-                            last_index = start_index + n_sces
-                            if ca_id != cluster_id:
-                                start_index += n_sces
-                                continue
-
-                            for i, index_sce_period in enumerate(self.sce_indices[start_index:last_index]):
-                                if self.cellsinpeak[cell, index_sce_period] == 0:
-                                    # print(f"Clustering: Cell {cell} not in sce_index {index_sce_period}")
-                                    continue
-                                sce_period = self.SCE_times[int(index_sce_period)]
-                                mcad_data_dict['cells'][cell].append([sce_period[0], sce_period[1]])
-
+                    for ca_id, sces_indices_tuple in self.sces_in_cell_assemblies_clusters.items():
+                        n_sces = sces_indices_tuple[0][1] - sces_indices_tuple[0][0]
+                        last_index = start_index + n_sces
+                        if ca_id != cluster_id:
                             start_index += n_sces
+                            continue
 
-                    start = stop
+                        for i, index_sce_period in enumerate(self.sce_indices[start_index:last_index]):
+                            if self.cellsinpeak[cell, index_sce_period] == 0:
+                                # print(f"Clustering: Cell {cell} not in sce_index {index_sce_period}")
+                                continue
+                            sce_period = self.SCE_times[int(index_sce_period)]
+                            mcad_data_dict['cells'][int(cell)].append([int(sce_period[0]), int(sce_period[1])])
+
+                        start_index += n_sces
+
+                start = stop
 
         with open(file_name, 'w') as outfile:
-            yaml.dump(mcad_data_dict, outfile, default_flow_style=False)
+            yaml.dump(mcad_data_dict, outfile, default_flow_style=False, sort_keys=True)
 
     def save_data_on_file(self, n_clusters):
         file_name = f'{self.path_results}/{self.data_id}_{n_clusters}_clusters_cell_assemblies_data.txt'
