@@ -3,6 +3,13 @@ import os
 import hdf5storage
 import numpy as np
 from sortedcontainers import SortedList, SortedDict
+import neo
+import quantities as pq
+from pymeica.utils.spike_trains import create_spike_train_neo_format, spike_trains_threshold_by_firing_rate
+import elephant.conversion as elephant_conv
+from pymeica.utils.mcad import MCADOutcome
+from pymeica.utils.file_utils import find_files
+import yaml
 
 
 class SpikeStructure:
@@ -343,6 +350,134 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         self.n_microwires = len(self.spikes_by_microwire)
         self.available_micro_wires = np.array(self.available_micro_wires)
 
+    def load_mcad_data(self, data_path, macd_comparison_key=MCADOutcome.BEST_SILHOUETTE):
+        """
+        Explore all directories in data_path (recursively) and load the data issues from Malvache Cell Assemblies
+        Detection code in yaml file.
+        :param data_path:
+        :param macd_comparison_key: indicate how to compare two outcomes for the same spike_trains section
+        Choice among: MCADOutcome.BEST_SILHOUETTE & MCADOutcome.MAX_N_ASSEMBLIES
+        :return:
+        """
+        if data_path is None:
+            return
+
+        mcad_files = find_files(dir_to_explore=data_path, keywords=["stage"], extensions=("yaml", "yml"))
+
+        # first key: sleep_stage index, 2nd key: tuple of int representing firt and last bin,
+        # value is a list of dict representing the content of the yaml file
+        mcad_by_sleep_stage = dict()
+        for mcad_file in mcad_files:
+            with open(mcad_file, 'r') as stream:
+                mcad_results_dict = yaml.load(stream, Loader=yaml.Loader)
+                # first we check if it contains some of the field typical of mcad file
+                if ("subject_id" not in mcad_results_dict) or ("sleep_stage_index" not in mcad_results_dict):
+                    continue
+                # then we check that it matches the actual subject_id
+                if mcad_results_dict["subject_id"] != self.identifier:
+                    continue
+                sleep_stage_index = mcad_results_dict["sleep_stage_index"]
+                first_bin_index = mcad_results_dict["first_bin_index"]
+                last_bin_index = mcad_results_dict["last_bin_index"]
+                bins_tuple = (first_bin_index, last_bin_index)
+                if sleep_stage_index not in mcad_by_sleep_stage:
+                    mcad_by_sleep_stage[sleep_stage_index] = dict()
+                if bins_tuple not in mcad_by_sleep_stage[sleep_stage_index]:
+                    mcad_by_sleep_stage[sleep_stage_index][bins_tuple] = []
+                mcad_by_sleep_stage[sleep_stage_index][bins_tuple].append(mcad_results_dict)
+
+        # now we want to keep only one result for each chunk a given sleep_stage
+        # and add it to the SleepStage instance
+        for sleep_stage_index in mcad_by_sleep_stage.keys():
+            for bins_tuple, mcad_dicts in mcad_by_sleep_stage[sleep_stage_index].items():
+                best_mcad_outcome = None
+                for mcad_dict in mcad_dicts:
+                    mcad_outcome = MCADOutcome(mcad_yaml_dict=mcad_dict,
+                                               comparison_key=macd_comparison_key)
+                    if best_mcad_outcome is None:
+                        best_mcad_outcome = mcad_outcome
+                    else:
+                        best_mcad_outcome = best_mcad_outcome.compare_to(mcad_outcome)
+                # TODO: Add it to the sleep stage instance
+
+        print(f"mcad_by_sleep_stage {len(mcad_by_sleep_stage)}")
+
+
+    def build_spike_nums(self, sleep_stage_index, side_to_analyse, keeping_only_SU, remove_high_firing_cells,
+                         firing_rate_threshold, spike_trains_binsize):
+        """
+        Build a spike_nums (bin version of spike_trains) from a sleep stage index and side.
+        :param sleep_stage_index: (int)
+        :param side_to_analyse: (str) 'L' or 'R'
+        :param keeping_only_SU: (bool)
+        :param remove_high_firing_cells: (bool)
+        :param firing_rate_threshold: (int) in Hz
+        :param spike_trains_binsize: (int) in ms
+        :return:
+        """
+
+        spike_struct = self.construct_spike_structure(sleep_stage_indices=[sleep_stage_index],
+                                                      channels_starting_by=[side_to_analyse],
+                                                      keeping_only_SU=keeping_only_SU)
+        spike_trains = spike_struct.spike_trains
+        cells_label = spike_struct.labels
+        binsize = spike_trains_binsize * pq.ms
+
+        # first we create a spike_trains in the neo format
+        spike_trains, t_start, t_stop = create_spike_train_neo_format(spike_trains)
+
+        duration_in_sec = (t_stop - t_start) / 1000
+
+        if remove_high_firing_cells:
+            filtered_spike_trains, cells_below_threshold = \
+                spike_trains_threshold_by_firing_rate(spike_trains=spike_trains,
+                                                      firing_rate_threshold=firing_rate_threshold,
+                                                      duration_in_sec=duration_in_sec)
+            backup_spike_trains = spike_trains
+            spike_trains = filtered_spike_trains
+            n_cells_total = len(cells_label)
+            cells_label_removed = [(index, label) for index, label in enumerate(cells_label) if
+                                   index not in cells_below_threshold]
+            cells_label = [label for index, label in enumerate(cells_label) if index in cells_below_threshold]
+            n_cells = len(cells_label)
+            print(
+                f"{n_cells_total - n_cells} cells had firing rate > {firing_rate_threshold} Hz and have been removed.")
+            if len(cells_label_removed):
+                for index, label in cells_label_removed:
+                    print(f"{label}, {len(backup_spike_trains[index])}")
+
+        n_cells = len(spike_trains)
+
+        neo_spike_trains = []
+        for cell in np.arange(n_cells):
+            spike_train = spike_trains[cell]
+            # print(f"n_spikes: {cells_label[cell]}: {len(spike_train)}")
+            neo_spike_train = neo.SpikeTrain(times=spike_train, units='ms',
+                                             t_start=t_start,
+                                             t_stop=t_stop)
+            neo_spike_trains.append(neo_spike_train)
+
+        spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=binsize)
+
+        # transform the binned spike train into array
+        use_z_score_binned_spike_trains = False
+        if use_z_score_binned_spike_trains:
+            data = spike_trains_binned.to_array()
+            # print(f"data.type() {type(data)}")
+            # z-score
+            spike_nums = np.zeros(data.shape, dtype="int8")
+            for cell, binned_spike_train in enumerate(data):
+                mean_train = np.mean(binned_spike_train)
+                print(f"mean_train {mean_train} {np.max(binned_spike_train)}")
+                binned_spike_train = binned_spike_train - mean_train
+                n_before = len(np.where(data[cell] > 0)[0])
+                n = len(np.where(binned_spike_train >= 0)[0])
+                print(f"{cell}: n_before {n_before} vs {n}")
+                spike_nums[cell, binned_spike_train >= 0] = 1
+        else:
+            spike_nums = spike_trains_binned.to_bool_array().astype("int8")
+
+        return spike_trains, spike_nums, cells_label
 
     def construct_spike_structure(self, sleep_stage_indices=None,
                                   selection_range_time=None,

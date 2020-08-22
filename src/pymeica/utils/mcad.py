@@ -39,11 +39,9 @@ def mcad_main(stage_descr, results_path,
               spike_trains_binsize,
               max_size_chunk_in_sec,
               min_size_chunk_in_sec,
-              spike_trains, cells_label, subject_id,
-              remove_high_firing_cells,
+              spike_nums, spike_trains, cells_label, subject_id,
               n_surrogate_activity_threshold, perc_threshold_for_sce, verbose,
               perc_threshold_for_kmean_surrogates, params_to_save_dict,
-              firing_rate_threshold=5,
               min_n_assemblies=1):
     """
 
@@ -58,10 +56,11 @@ def mcad_main(stage_descr, results_path,
     cluster holds the best silhouette (the best orthogonality in a sort). It's different than finding a threshold.
     :param min_n_assemblies: if there are two number of surrogates for kmean, this is used to try the second if the
     minimum of assemblies has been found. The assemblies figure is also produce only if this given number is reached
-    :param spike_trains_binsize:
+    :param spike_trains_binsize: (int) size of the bin for binning spike train timestamps (in ms)
     :param params_to_save_dict: (dict) params to save in the yaml file, key represent the param id, value its value
     should be simple variable type (list, int, float, str), avoid tuples
-    :param spike_trains:
+    :param spike_nums: 2d binary array (n_cells * n_bins)
+    :param spike_trains: list of list (n*cells * n*timestamps)
     :param cells_label:
     :param subject_id:
     :param remove_high_firing_cells:
@@ -74,88 +73,25 @@ def mcad_main(stage_descr, results_path,
 
     # ------------------------ params ------------------------
     with_cells_in_cluster_seq_sorted = False
-    # kmean clustering
-    # k_means_cluster_size = np.arange(3, 5)
-    # n_surrogate_k_mean = 20
     keep_only_the_best_kmean_cluster = False
     # shuffling is necessary to select the significant clusters
     with_shuffling = True
-    # spike_trains_binsize = 25
-    binsize = spike_trains_binsize * pq.ms
-
-    max_size_chunk_in_bins = (max_size_chunk_in_sec * 1000) // spike_trains_binsize
-    min_size_chunk_in_bins = (min_size_chunk_in_sec * 1000) // spike_trains_binsize
-
-    # first we create a spike_trains in the neo format
-    spike_trains, t_start, t_stop = create_spike_train_neo_format(spike_trains)
-
-    duration_in_sec = (t_stop - t_start) / 1000
-    # print("")
-    # print(f"## duration in sec {np.round(duration_in_sec, 3)}")
-    # print("")
-
-    # if duration_in_sec > 330:
-    #     print(f"skipping this stage because duration > 180 sec")
-    #     path_results = os.path.join(results_path, f"k_mean_{subject_id}_{stage_descr}_skipped")
-    #     os.mkdir(path_results)
-    #     return
 
     results_path = os.path.join(results_path, f"mcad_{subject_id}_{stage_descr}")
     os.mkdir(results_path)
 
-    if remove_high_firing_cells:
-        filtered_spike_trains, cells_below_threshold = \
-            spike_trains_threshold_by_firing_rate(spike_trains=spike_trains,
-                                                  firing_rate_threshold=firing_rate_threshold,
-                                                  duration_in_sec=duration_in_sec)
-        backup_spike_trains = spike_trains
-        spike_trains = filtered_spike_trains
-        n_cells_total = len(cells_label)
-        cells_label_removed = [(index, label) for index, label in enumerate(cells_label) if
-                               index not in cells_below_threshold]
-        cells_label = [label for index, label in enumerate(cells_label) if index in cells_below_threshold]
-        n_cells = len(cells_label)
-        print(f"{n_cells_total - n_cells} cells had firing rate > {firing_rate_threshold} Hz and have been removed.")
-        if len(cells_label_removed):
-            for index, label in cells_label_removed:
-                print(f"{label}, {len(backup_spike_trains[index])}")
+    max_size_chunk_in_bins = (max_size_chunk_in_sec * 1000) // spike_trains_binsize
+    min_size_chunk_in_bins = (min_size_chunk_in_sec * 1000) // spike_trains_binsize
 
     n_cells = len(spike_trains)
+    params_to_save_dict["cell_index_to_label"] = dict()
+    for unit_index in np.arange(n_cells):
+        params_to_save_dict["cell_index_to_label"][int(unit_index)] = str(cells_label[unit_index])
 
     print(f"Nb units analysed: {len(spike_trains)}")
     print("Below: unit type, cluster, electrode & number of spikes ")
     for i, train in enumerate(spike_trains):
         print(f"{cells_label[i]}, {len(train)}")
-
-    neo_spike_trains = []
-    for cell in np.arange(n_cells):
-        spike_train = spike_trains[cell]
-        # print(f"n_spikes: {cells_label[cell]}: {len(spike_train)}")
-        neo_spike_train = neo.SpikeTrain(times=spike_train, units='ms',
-                                         t_start=t_start,
-                                         t_stop=t_stop)
-        neo_spike_trains.append(neo_spike_train)
-
-    spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=binsize)
-
-    # transform the binned spike train into array
-    use_z_score_binned_spike_trains = False
-    if use_z_score_binned_spike_trains:
-        data = spike_trains_binned.to_array()
-        # print(f"data.type() {type(data)}")
-        # z-score
-        spike_nums = np.zeros(data.shape, dtype="int8")
-        for cell, binned_spike_train in enumerate(data):
-            mean_train = np.mean(binned_spike_train)
-            print(f"mean_train {mean_train} {np.max(binned_spike_train)}")
-            binned_spike_train = binned_spike_train - mean_train
-            n_before = len(np.where(data[cell] > 0)[0])
-            n = len(np.where(binned_spike_train >= 0)[0])
-            print(f"{cell}: n_before {n_before} vs {n}")
-            spike_nums[cell, binned_spike_train >= 0] = 1
-        # raise Exception("TEST")
-    else:
-        spike_nums = spike_trains_binned.to_bool_array().astype("int8")
 
     n_bins_in_spike_nums = spike_nums.shape[1]
 
@@ -206,23 +142,10 @@ def mcad_main(stage_descr, results_path,
                                                          n_surrogate=n_surrogate_activity_threshold,
                                                          perc_threshold=perc_threshold_for_sce,
                                                          debug_mode=False)
-        # stop_time = time.time()
-        # print(f"Time to compute synchronous event threshold "
-        #       f"{np.round(stop_time - start_time, 3)} s")
-        # activity_threshold = get_sce_detection_threshold(spike_nums=spike_struct.spike_trains,
-        #
-        #                                                  window_duration=sliding_window_duration,
-        #                                                  use_max_of_each_surrogate=False,
-        #                                                  spike_train_mode=True,
-        #                                                  n_surrogate=n_surrogate_activity_threshold,
-        #                                                  perc_threshold=perc_threshold,
-        #                                                  debug_mode=False)
-        # print(f"activity_threshold {int(activity_threshold)}")
+
         # we set at 2 the minimum the number of cell to define a synchronous event
         if activity_threshold < 2:
             activity_threshold = 2
-            # print(f"activity_threshold increased to: {int(activity_threshold)}")
-        # print(f"sliding_window_duration {sliding_window_duration}")
 
         plot_raster(spike_nums=spike_nums, path_results=results_path,
                     spike_train_format=False,
@@ -254,18 +177,6 @@ def mcad_main(stage_descr, results_path,
         sce_times_bool = sce_detection_result[0]
         sce_times_numbers = sce_detection_result[3]
         print(f"Nb units x SCE: {cellsinpeak.shape}")
-        # raise Exception("GAME OVER")
-        # print(f"Nb spikes by SCE: {np.sum(cellsinpeak, axis=0)}")
-        # cells_isi = tools_misc.get_isi(spike_data=spike_struct.spike_trains, spike_trains_format=True)
-        # for cell_index in np.arange(len(spike_struct.spike_trains)):
-        #     print(f"{spike_struct.labels[cell_index]} median isi: {np.round(np.median(cells_isi[cell_index]), 2)}, "
-        #           f"mean isi {np.round(np.mean(cells_isi[cell_index]), 2)}")
-
-        # nb_neurons = len(cellsinpeak)
-
-        # return a dict of list of list of neurons, representing the best clusters
-        # (as many as nth_best_clusters).
-        # the key is the K from the k-mean
 
         data_descr = f"{subject_id} {stage_descr} sleep {bin_descr}"
 
@@ -296,11 +207,63 @@ def mcad_main(stage_descr, results_path,
                                                        with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
 
 
+class MCADOutcome:
+    BEST_SILHOUETTE = "best_silhouette"
+
+    MAX_N_ASSEMBLIES = "max_n_assemblies"
+
+    def __init__(self, mcad_yaml_dict, comparison_key):
+        """
+        Allows to easily access outcome of a MCAD that has been computed using the yaml recorded to load the instance.
+        :param mcad_yaml_dict: (dict) should be loaded from the yaml file created from the MCAD
+        :param comparison_key: (str) should be on the constant of MCADOutcome. Indicate which criteria to take
+        in consideration to compare two instances of MCADOutcome.
+        """
+
+        self.mcad_yaml_dict = mcad_yaml_dict
+        self.silhouette_score = mcad_yaml_dict["silhouette_score"]
+        self.n_cell_assemblies = mcad_yaml_dict["n_cell_assemblies"]
+        self.comparison_key = comparison_key
+
+    def best_mcad_outcome(self, other_mcad_outcome):
+        if self.comparison_key == self.BEST_SILHOUETTE:
+            return self._mcad_with_best_silhouette(other_mcad_outcome=other_mcad_outcome)
+        if self.comparison_key == self.MAX_N_ASSEMBLIES:
+            return self._mcad_with_max_n_assemblies(other_mcad_outcome=other_mcad_outcome)
+
+        return self
+
+    def _mcad_with_max_n_assemblies(self, other_mcad_outcome):
+        """
+        Return the instance with the best silhouette
+        :param other_mcad_outcome:
+        :return:
+        """
+        if self.silhouette_score >= other_mcad_outcome.silhouette_score:
+            return self
+        return other_mcad_outcome
+
+    def _mcad_with_best_silhouette(self, other_mcad_outcome):
+        """
+        Return the instance with the max number of assemblies.
+        If equal, choose the one with the best silhouette score.
+        :param other_mcad_outcome:
+        :return:
+        """
+        if self.n_cell_assemblies > other_mcad_outcome.n_cell_assemblies:
+            return self
+        if self.n_cell_assemblies < other_mcad_outcome.n_cell_assemblies:
+            return other_mcad_outcome
+
+        return self._mcad_with_max_n_assemblies(other_mcad_outcome=other_mcad_outcome)
+
+
 class CellAssembliesStruct:
     def __init__(self, cellsinpeak, silhouette_score, n_clusters, sce_clusters_id, sce_clusters_labels, neurons_labels,
                  cluster_with_best_silhouette_score, path_results, sliding_window_duration, activity_threshold,
                  n_surrogate_k_mean, SCE_times, data_id):
         """
+        Used to help computation of cell assemblies
 
         :param cellsinpeak:
         :param silhouette_score: Avg silhouette score for this number of cluster
@@ -387,7 +350,8 @@ class CellAssembliesStruct:
             start = 0
             for cluster_id, n_cells in enumerate(self.n_cells_in_cell_assemblies_clusters):
                 stop = start + n_cells
-                mcad_data_dict['single_cell_assemblies'][int(cluster_id)] = [int(c) for c in self.cells_indices[start:stop]]
+                mcad_data_dict['single_cell_assemblies'][int(cluster_id)] = [int(c) for c in
+                                                                             self.cells_indices[start:stop]]
                 start = stop
 
             # MCA_SE: multiple cell-assembly synchronous events
@@ -2228,7 +2192,7 @@ def compute_kmean(neurons_labels, cellsinpeak, n_surrogates_k_mean, n_trials_k_m
                   perc_threshold_for_kmean_surrogates,
                   sliding_window_duration, SCE_times, data_id,
                   fct_to_keep_best_silhouettes=np.mean,
-                  keep_only_the_best=True,
+                  keep_only_the_best=False,
                   debug_mode=False):
     """
 
@@ -2303,15 +2267,18 @@ def compute_kmean(neurons_labels, cellsinpeak, n_surrogates_k_mean, n_trials_k_m
         if len(range_n_clusters) == 0:
             break
 
-    if not keep_only_the_best:
-        range_n_clusters = range_n_clusters_original
+    # if not keep_only_the_best:
+    #     range_n_clusters = range_n_clusters_original
+    #
+    # # print(f"range_n_clusters {range_n_clusters}")
+    # # print(f"significant_sce_clusters {significant_sce_clusters}")
+    # # updating range_n_clusters
+    # range_n_clusters_tmp = []
+    # for n_cluster in range_n_clusters:
+    #     if n_cluster in significant_sce_clusters:
+    #         range_n_clusters_tmp.append(n_cluster)
+    # range_n_clusters = np.array(range_n_clusters_tmp)
 
-    # updating range_n_clusters
-    range_n_clusters_tmp = []
-    for n_cluster in range_n_clusters:
-        if n_cluster in significant_sce_clusters:
-            range_n_clusters_tmp.append(n_cluster)
-    range_n_clusters = np.array(range_n_clusters_tmp)
 
     cell_assemblies_struct_dict = dict()
     for n_cluster in range_n_clusters:
@@ -2361,9 +2328,10 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
                                                    n_surrogate_activity_threshold,
                                                    perc_threshold_for_kmean_surrogates,
                                                    params_to_save_dict,
+                                                   keep_only_the_best,
                                                    with_shuffling=True,
                                                    sce_times_bool=None,
-                                                   debug_mode=False, keep_only_the_best=True,
+                                                   debug_mode=False,
                                                    with_cells_in_cluster_seq_sorted=False,
                                                    fct_to_keep_best_silhouettes=np.mean,
                                                    save_co_var_kmean_plot=False,
@@ -2450,9 +2418,8 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
                                      with_cells_in_cluster_seq_sorted=False,
                                      sce_times_bool=sce_times_bool,
                                      save_formats=['pdf', 'png'])  # "pdf"
-        # TODO: See to improve the outputs
-        # TODO: Add the avg silhouette of cluster
-        cas.save_data_on_file(n_clusters=n_cluster)
+
+        # cas.save_data_on_file(n_clusters=n_cluster)
         cas.save_data_on_yaml_file(n_clusters=n_cluster, params_to_save_dict=params_to_save_dict)
         #
         # stop_time_cas_plot = time.time()
@@ -2576,9 +2543,9 @@ def compute_and_plot_clusters_raster_kmean_version(labels, activity_threshold, r
                                      surrogate_silhouette_avg=surrogate_percentiles[n_cluster],
                                      axes_list=[ax5, ax3, ax4], fig_to_use=fig, save_formats=["pdf", "png"])
             plt.close()
-            stop_time_co_var = time.time()
-            print(f"Time to plot kmean & co_var  "
-                  f"{np.round(stop_time_co_var - start_time_co_var, 3)} s")
+            # stop_time_co_var = time.time()
+            # print(f"Time to plot kmean & co_var  "
+            #       f"{np.round(stop_time_co_var - start_time_co_var, 3)} s")
 
     # do_cluster_activations_computing(cas)
     if save_stat_kmean:

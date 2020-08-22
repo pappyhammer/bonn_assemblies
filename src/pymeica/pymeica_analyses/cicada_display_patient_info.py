@@ -49,9 +49,13 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
         """
         CicadaAnalysis.set_arguments_for_gui(self)
 
-        self.add_bool_option_for_gui(arg_name="test_bool", true_by_default=False,
-                                     short_description="Test",
-                                     family_widget="test")
+        self.add_open_dir_dialog_arg_for_gui(arg_name="mcad_data_path", mandatory=False,
+                                             short_description="MCAD results data path",
+                                        long_description="To get a summary of Malvache Cell Assemblies Detection "
+                                                         "previsouly done for those session, indicate the path where"
+                                                         "to find the yaml file containing the results.",
+                                        key_names=None, family_widget="mcad")
+
 
     def update_original_data(self):
         """
@@ -70,7 +74,7 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
         """
         CicadaAnalysis.run_analysis(self, **kwargs)
 
-        test_bool = kwargs.get("test_bool", True)
+        mcad_data_path = kwargs.get("mcad_data_path")
 
         n_sessions = len(self._data_to_analyse)
 
@@ -78,6 +82,7 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
             session_identifier = session_data.identifier
             print(f"-------------- {session_identifier} -------------- ")
             session_data.descriptive_stats()
+            session_data.load_mcad_data(data_path=mcad_data_path)
             self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
 
         print(f"Raster analysis run in {time() - self.analysis_start_time} sec")

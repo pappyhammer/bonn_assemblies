@@ -143,7 +143,16 @@ class CicadaMcad(CicadaAnalysis):
                                         short_description="Firing rate (Hz) threshold",
                                         default_value=5, family_widget="firing_rate")
 
+        self.add_int_values_arg_for_gui(arg_name="max_size_chunk_in_sec", min_value=30, max_value=360,
+                                        short_description="Max chunk of spike trains in sec to process",
+                                        default_value=120, family_widget="chunk_size")
 
+        self.add_int_values_arg_for_gui(arg_name="min_size_chunk_in_sec", min_value=10, max_value=60,
+                                        short_description="Min chunk of spike trains in sec to process",
+                                        long_description="Applies only for chunk that are cut, meaning shorter "
+                                                         "than the max chunk size. Then if the last chunk is inferior "
+                                                         "the min value, then we extend the other chunk.",
+                                        default_value=40, family_widget="chunk_size")
 
     def update_original_data(self):
         """
@@ -173,8 +182,8 @@ class CicadaMcad(CicadaAnalysis):
         spike_trains_bin_size = kwargs.get("spike_trains_bin_size", 25)
 
         min_n_clusters = kwargs.get("min_n_clusters", 2)
-        max_n_clusters = min(min_n_clusters, kwargs.get("max_n_clusters", 2))
-        k_means_cluster_size = np.arange(min_n_clusters, max_n_clusters+1)
+        max_n_clusters = max(min_n_clusters, kwargs.get("max_n_clusters", 2))
+        k_means_cluster_size = np.arange(min_n_clusters, max_n_clusters + 1)
 
         n_surrogate_activity_threshold = kwargs.get("n_surrogate_activity_threshold", 500)
         perc_threshold_for_sce = kwargs.get("perc_threshold_for_sce", 95)
@@ -198,8 +207,8 @@ class CicadaMcad(CicadaAnalysis):
             k_mean_n_trials = k_mean_n_trials_2nd_try
 
         # in second, used to split the sleep stages in chunks
-        max_size_chunk_in_sec = 120
-        min_size_chunk_in_sec = 40
+        max_size_chunk_in_sec = kwargs.get("max_size_chunk_in_sec", 120)
+        min_size_chunk_in_sec = kwargs.get("max_size_chunk_in_sec", 40)
 
         n_sessions = len(self._data_to_analyse)
         session_data = self._data_to_analyse[0]
@@ -226,8 +235,6 @@ class CicadaMcad(CicadaAnalysis):
                 sleep_stage_index = self.sleep_stage_selection_to_index[sleep_stage]
             total_time_over_stages += session_data.sleep_stages[sleep_stage_index].duration_sec
 
-        # TODO: Add arguments in widgets
-        # TODO:; see to split sleep stages by number of SCEs
         for sleep_stage in sleep_stages_selected:
             if all_data_by_sleep_stages:
                 sleep_stage_index = sleep_stage
@@ -235,13 +242,21 @@ class CicadaMcad(CicadaAnalysis):
                 # then it's a string describing the sleep stage and we convert it in integer.
                 sleep_stage_index = self.sleep_stage_selection_to_index[sleep_stage]
             print(" ")
-            print("-"*50)
+            print("-" * 50)
             print(f"Cicada MCAD: {side_to_analyse} side, sleep stage index {sleep_stage_index}, "
                   f"{session_data.sleep_stages[sleep_stage_index].duration_sec} sec")
-            print("-"*50)
-            spike_struct = session_data.construct_spike_structure(sleep_stage_indices=[sleep_stage_index],
-                                                                  channels_starting_by=[side_to_analyse],
-                                                                  keeping_only_SU=not use_su_and_mu)
+            print("-" * 50)
+
+            spike_trains, spike_nums, cells_label = \
+                session_data.build_spike_nums(sleep_stage_index=sleep_stage_index,
+                                              side_to_analyse=side_to_analyse,
+                                              keeping_only_SU=not use_su_and_mu,
+                                              remove_high_firing_cells=remove_high_firing_cells,
+                                              firing_rate_threshold=firing_rate_threshold,
+                                              spike_trains_binsize=spike_trains_bin_size)
+            # spike_struct = session_data.construct_spike_structure(sleep_stage_indices=[sleep_stage_index],
+            #                                                       channels_starting_by=[side_to_analyse],
+            #                                                       keeping_only_SU=not use_su_and_mu)
             stage_descr = f"{side_to_analyse} stage {session_data.sleep_stages[sleep_stage_index].sleep_stage} " \
                           f"index {sleep_stage_index}"
 
@@ -253,6 +268,9 @@ class CicadaMcad(CicadaAnalysis):
             params_to_save_dict["sleep_stage_name"] = str(session_data.sleep_stages[sleep_stage_index].sleep_stage)
             params_to_save_dict["sleep_stage_index"] = sleep_stage_index
 
+            if remove_high_firing_cells:
+                params_to_save_dict["firing_rate_threshold"] = int(firing_rate_threshold)
+
             # TODO: Add arguments in widgets
             mcad_main(stage_descr=stage_descr, results_path=self.get_results_path(),
                       k_means_cluster_size=k_means_cluster_size,
@@ -261,11 +279,10 @@ class CicadaMcad(CicadaAnalysis):
                       spike_trains_binsize=spike_trains_bin_size,
                       max_size_chunk_in_sec=max_size_chunk_in_sec,
                       min_size_chunk_in_sec=min_size_chunk_in_sec,
-                      spike_trains=spike_struct.spike_trains, cells_label=spike_struct.labels,
+                      spike_trains=spike_trains, cells_label=cells_label,
+                      spike_nums=spike_nums,
                       subject_id=session_identifier,
                       params_to_save_dict=params_to_save_dict,
-                      remove_high_firing_cells=remove_high_firing_cells,
-                      firing_rate_threshold=firing_rate_threshold,
                       n_surrogate_activity_threshold=n_surrogate_activity_threshold,
                       perc_threshold_for_sce=perc_threshold_for_sce,
                       verbose=verbose,
@@ -274,8 +291,8 @@ class CicadaMcad(CicadaAnalysis):
             self.update_progressbar(time_started=self.analysis_start_time,
                                     increment_value=
                                     (session_data.sleep_stages[sleep_stage_index].duration_sec /
-                                     total_time_over_stages)*100)
+                                     total_time_over_stages) * 100)
 
         self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)
 
-        print(f"MCAD analysis run in {time() - self.analysis_start_time} sec")
+        print(f"MCAD analysis run in {time() - self.analysis_start_time:.2f} sec")
