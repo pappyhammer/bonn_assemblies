@@ -9,14 +9,15 @@ from pymeica.utils.spike_trains import create_spike_train_neo_format, spike_trai
 import elephant.conversion as elephant_conv
 from pymeica.utils.mcad import MCADOutcome
 from pymeica.utils.file_utils import find_files
+from pymeica.utils.misc import get_unit_label
 import yaml
+import pandas as pd
 
 
 class SpikeStructure:
 
     def __init__(self, patient, spike_trains, microwire_labels, cluster_labels, cluster_indices,
-                 activity_threshold=None,
-                 title=None, ordered_indices=None, ordered_spike_data=None):
+                 spike_nums=None, title=None): # , ordered_indices=None, ordered_spike_data=None):
         """
 
         Args:
@@ -34,46 +35,53 @@ class SpikeStructure:
 
         self.patient = patient
         self.spike_trains = spike_trains
-        self.ordered_spike_data = ordered_spike_data
-        # array of int
+        # self.ordered_spike_data = ordered_spike_data
+        # array of int, representing the channel number actually such as in 'times_pos_CSC2.mat'
         self.microwire_labels = np.array(microwire_labels)
         # array of int
         self.cluster_labels = np.array(cluster_labels)
         self.cluster_indices = np.array(cluster_indices)
         self.title = title
+        # cells labels
         self.labels = self.get_labels()
-        self.ordered_indices = ordered_indices
-        self.ordered_labels = None
-        self.ordered_spike_trains = None
-        if self.ordered_indices is not None:
-            self.ordered_spike_trains = list()
-            for index in ordered_indices:
-                self.ordered_spike_trains.append(self.spike_trains[index])
-            self.ordered_labels = []
-            # y_ticks_labels_ordered = spike_nums_struct.labels[best_seq]
-            for old_cell_index in self.ordered_indices:
-                self.ordered_labels.append(self.labels[old_cell_index])
+        # self.ordered_indices = ordered_indices
+        # self.ordered_labels = None
+        # self.ordered_spike_trains = None
+        # if self.ordered_indices is not None:
+        #     self.ordered_spike_trains = list()
+        #     for index in ordered_indices:
+        #         self.ordered_spike_trains.append(self.spike_trains[index])
+        #     self.ordered_labels = []
+        #     # y_ticks_labels_ordered = spike_nums_struct.labels[best_seq]
+        #     for old_cell_index in self.ordered_indices:
+        #         self.ordered_labels.append(self.labels[old_cell_index])
 
     def get_labels(self):
         labels = []
-        cluster_to_label = {1: "MU ", 2: "SU ", -1: "Artif ", 0: ""}
+        # cluster_to_label = {1: "MU ", 2: "SU ", -1: "Artif ", 0: ""}
+        cluster_to_label = {1: "MU", 2: "SU", -1: "Artif", 0: ""}
+        # print(f"get_labels self.microwire_labels {self.microwire_labels}")
         for i, micro_wire in enumerate(self.microwire_labels):
             channel = self.patient.channel_info_by_microwire[micro_wire]
-            labels.append(f"{cluster_to_label[self.cluster_labels[i]]}{micro_wire} "
-                          f"{channel}")
+            unit_label = get_unit_label(cluster_label=cluster_to_label[self.cluster_labels[i]],
+                                        cluster_index=self.cluster_indices[i],
+                                        channel_index=micro_wire, region_label=channel)
+            labels.append(unit_label)
+            # labels.append(f"{cluster_to_label[self.cluster_labels[i]]}{micro_wire} "
+            #               f"{channel}")
         return labels
 
-    def set_order(self, ordered_indices):
-        if ordered_indices is None:
-            self.ordered_spike_trains = np.copy(self.spike_trains)
-        else:
-            self.ordered_spike_trains = []
-            for index in ordered_indices:
-                self.ordered_spike_trains.append(self.spike_trains[index])
-            self.ordered_indices = ordered_indices
-            self.ordered_labels = []
-            for old_cell_index in self.ordered_indices:
-                self.ordered_labels.append(self.labels[old_cell_index])
+    # def set_order(self, ordered_indices):
+    #     if ordered_indices is None:
+    #         self.ordered_spike_trains = np.copy(self.spike_trains)
+    #     else:
+    #         self.ordered_spike_trains = []
+    #         for index in ordered_indices:
+    #             self.ordered_spike_trains.append(self.spike_trains[index])
+    #         self.ordered_indices = ordered_indices
+    #         self.ordered_labels = []
+    #         for old_cell_index in self.ordered_indices:
+    #             self.ordered_labels.append(self.labels[old_cell_index])
 
 
 class SleepStage:
@@ -90,6 +98,19 @@ class SleepStage:
         self.conversion_datetime = conversion_datetime
         self.conversion_timestamp = conversion_timestamp * 1000
         self.number = number
+        # first key is a tuple of int representing first_bin and last_bin
+        # value is an instance of MCADOutcome, bin_size is available in MCADOutcome
+        self.mcad_outcomes = dict()
+        # TODO: See to build an array with int key to get the MCADOutcome from a bin index or timestamps
+
+    def add_mcad_outcome(self, mcad_outcome, bins_tuple):
+        """
+        Add an instance of MCADOutcome
+        :param mcad_outcome:
+        :param bins_tuple:
+        :return:
+        """
+        self.mcad_outcomes[bins_tuple] = mcad_outcome
 
     def __str__(self):
         result = ""
@@ -98,7 +119,18 @@ class SleepStage:
         # result += f"start_time  {self.start_time}, "
         # result += f"stop_time  {self.stop_time}, \n"
         # result += f"duration (usec)  {self.duration}, "
-        result += f"duration: {self.duration_sec:.1f} sec, {(self.duration / 1000000) / 60:.1f} min"
+        result += f"duration: {self.duration_sec:.1f} sec, {(self.duration / 1000000) / 60:.1f} min\n"
+        if len(self.mcad_outcomes) == 0:
+            result += f" No MCAD outcome"
+        else:
+            for bins_tuple, mcad_outcome in self.mcad_outcomes.items():
+                first_bin_index = bins_tuple[0]
+                last_bin_index = bins_tuple[1]
+                chunk_duration = (last_bin_index - first_bin_index + 1) * mcad_outcome.spike_trains_bin_size
+                # passing it in sec
+                chunk_duration /= 1000
+                result += f" {mcad_outcome.n_cell_assemblies} cell assemblies on {chunk_duration:.2f} sec segment."
+
         # result += f",\n conversion_datetime  {self.conversion_datetime}, "
         # result += f"conversion_timestamp  {self.conversion_timestamp}, "
         return result
@@ -145,6 +177,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         # replace by the code of the type of unit: SU, MU etc... 1 = MU  2 = SU -1 = Artif.
         self.spikes_time_by_microwire = dict()
 
+
         self.channel_info_by_microwire = None
 
         # list of SleepStage instances (in chronological order)
@@ -153,14 +186,64 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         self.cluster_info = None
 
         self.n_microwires = 0
-        self.available_micro_wires = 0
+        # self.available_micro_wires = 0
 
         self.nb_sleep_stages = 0
+        # list of int, corresponding of the int representing the micro_wire such as in files 'times_CSC1'
         self.available_micro_wires = list()
+
+        # key is the label (str) representing a unit such as 'MU 7 25 LMH2'
+        # (SU or MU, cluster_index, microwireçindex, Side&Channel),
+        # value is a list of two int representing the prefered stimulus in the evening and in the morning.
+        # if -1, means no answer at this moment
+        # if a label (cell) is not in this dict, it means it is not a responsive units
+        self.is_responsive_units_dict = dict()
+        # same as for is_responsive_units_dict but for invariant units
+        self.is_invariant_units_dict = dict()
 
         if self.load_data_at_init:
             self.load_data()
 
+    def _load_responsive_and_invariant_units(self, df, invariant_units):
+        """
+
+        :param df: panda dataframe to explore
+        :param invariant_units: (bool) if True then it's invariant_units, else it is responsive units
+        :return:
+        """
+        if invariant_units:
+            units_dict = self.is_invariant_units_dict = dict()
+        else:
+            units_dict = self.is_responsive_units_dict = dict()
+
+        df_response = df.loc[(df['Patient'] == int(self.identifier[1:3]))]
+        if len(df_response) == 0:
+            return
+        # print(f"invariant_units {invariant_units}")
+        for index in df_response.index:
+            channel = df.loc[df.index[index], 'Channel']
+            # removing one so it matches the actual indexing
+            channel -= 1
+            cluster = df.loc[df.index[index], 'Cluster']
+            hemisphere = df.loc[df.index[index], 'Hemisphere']
+            region = df.loc[df.index[index], 'Region']
+            wire = df.loc[df.index[index], 'Wire']
+            preferred_stim_num_e = df.loc[df.index[index], 'preferred_stim_num_e']
+            preferred_stim_num_m = df.loc[df.index[index], 'preferred_stim_num_m']
+            # print(f"channel {channel}, cluster {cluster}, hemisphere {hemisphere}, region {region}, "
+            #       f"wire {wire}, preferred_stim_num_e {preferred_stim_num_e}, "
+            #       f"preferred_stim_num_m {preferred_stim_num_m} ")
+            # print(f"self.cluster_info[micro_wire] {len(self.cluster_info)}")
+
+            cluster_infos = self.cluster_info[channel][0]
+            cluster_match_index = cluster_infos[cluster]
+            # print(f"cluster_infos {cluster_infos}")
+            cluster_to_label = {1: "MU", 2: "SU", -1: "Artif", 0: ""}
+            unit_label = get_unit_label(cluster_label=cluster_to_label[cluster_match_index],
+                                        cluster_index=cluster,
+                                        channel_index=channel,
+                                        region_label=f"{hemisphere}{region}{wire}")
+            units_dict[unit_label] = (preferred_stim_num_e, preferred_stim_num_m)
 
     @staticmethod
     def is_data_valid(data_ref):
@@ -347,6 +430,20 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                     # print(f"spikes time: {self.spikes_time_by_microwire[microwire_number].astype(int)}")
                     # print_mat_file_content(data_file)
                     print(f"\n \n")
+
+        # 2nd round for responsive and invariant units
+        for file_in_dir in files_in_dir:
+            if file_in_dir.endswith("csv") and "responsive_units" in file_in_dir:
+                # load responsive_units info
+                responsive_units_file = os.path.join(self._data_ref, file_in_dir)
+                responsive_units_df = pd.read_csv(responsive_units_file)
+                self._load_responsive_and_invariant_units(df=responsive_units_df, invariant_units=False)
+            elif file_in_dir.endswith("csv") and "invariant_units" in file_in_dir:
+                # load invariant_units info
+                invariant_units_file = os.path.join(self._data_ref, file_in_dir)
+                invariant_units_df = pd.read_csv(invariant_units_file)
+                self._load_responsive_and_invariant_units(df=invariant_units_df, invariant_units=True)
+
         self.n_microwires = len(self.spikes_by_microwire)
         self.available_micro_wires = np.array(self.available_micro_wires)
 
@@ -397,8 +494,12 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                     if best_mcad_outcome is None:
                         best_mcad_outcome = mcad_outcome
                     else:
-                        best_mcad_outcome = best_mcad_outcome.compare_to(mcad_outcome)
+                        best_mcad_outcome = best_mcad_outcome.best_mcad_outcome(mcad_outcome)
                 # TODO: Add it to the sleep stage instance
+            sleep_stage = self.sleep_stages[sleep_stage_index]
+            
+            sleep_stage.add_mcad_outcome(mcad_outcome=best_mcad_outcome,
+                                         bins_tuple=best_mcad_outcome.bins_tuple)
 
         print(f"mcad_by_sleep_stage {len(mcad_by_sleep_stage)}")
 
@@ -721,7 +822,9 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
             micro_wire_to_keep = []
             if channels_starting_by is None:
                 micro_wire_to_keep = self.available_micro_wires
-                print(f"n microwires: {len(micro_wire_to_keep)}")
+                print(f"n units: {len(micro_wire_to_keep)}")
+                print(f"n invariant units: {len(self.is_invariant_units_dict)}")
+                print(f"n responsive units: {len(self.is_responsive_units_dict)}")
             else:
                 indices, channels = self.select_channels_starting_by(channels_starting_by)
 
@@ -734,7 +837,13 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                     for d in to_del:
                         micro_wire_to_keep = micro_wire_to_keep[micro_wire_to_keep != d]
 
-                print(f"n microwires in {channels_starting_by}: {len(micro_wire_to_keep)}")
+                print(f"n units in {channels_starting_by}: {len(micro_wire_to_keep)}")
+
+                invariant_keys = list(self.is_invariant_units_dict.keys())
+                responsive_keys = list(self.is_responsive_units_dict.keys())
+
+                print(f"n invariant units: {len([k for k in invariant_keys if channels_starting_by in k])}")
+                print(f"n responsive units: {len([k for k in responsive_keys if channels_starting_by in k])}")
             mu_by_area_count = SortedDict()
             su_by_area_count = SortedDict()
             # A	AH	EC	MH	PH	PHC

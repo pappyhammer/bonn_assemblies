@@ -52,3 +52,14 @@ def get_continous_time_periods(binary_array):
                     result.append((h[0, i], h[1, i]-1))
             return result
     return []
+
+def get_unit_label(cluster_label, cluster_index, channel_index, region_label):
+    """
+    Return the string representing an unit
+    :param cluster_label: (str) such as 'SU', 'MU'
+    :param cluster_index: (int) representing the cluster, allows to distinguish SU & MU
+    :param channel_index: (int) micro_wire index, the one present in 'times_pos_CSC2.mat'
+    :param region_label: (str) such as LMH5 for Left Medial Hippocampus 5 (5 being the wire)
+    :return:
+    """
+    return f"{cluster_label} {cluster_index} {channel_index} {region_label}"

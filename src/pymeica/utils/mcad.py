@@ -39,6 +39,7 @@ def mcad_main(stage_descr, results_path,
               spike_trains_binsize,
               max_size_chunk_in_sec,
               min_size_chunk_in_sec,
+              min_activity_threshold,
               spike_nums, spike_trains, cells_label, subject_id,
               n_surrogate_activity_threshold, perc_threshold_for_sce, verbose,
               perc_threshold_for_kmean_surrogates, params_to_save_dict,
@@ -63,6 +64,7 @@ def mcad_main(stage_descr, results_path,
     :param spike_trains: list of list (n*cells * n*timestamps)
     :param cells_label:
     :param subject_id:
+    :param min_activity_threshold: min number of units to be active to define a syncrhonous event
     :param remove_high_firing_cells:
     :param n_surrogate_activity_threshold:
     :param perc_threshold:
@@ -129,7 +131,7 @@ def mcad_main(stage_descr, results_path,
     for spike_nums_index, spike_nums in enumerate(spike_nums_to_process):
         first_bin_index, last_bin_index = first_and_last_bins[spike_nums_index]
         if len(spike_nums_to_process) > 1:
-            print(f"Processing chunk from bin {first_bin_index} to {last_bin_index}")
+            print(f"Processing chunk n° {spike_nums_index} from bin {first_bin_index} to {last_bin_index}")
 
         bin_descr = f"bins_{first_bin_index}_{last_bin_index}"
         params_to_save_dict.update({"first_bin_index": first_bin_index})
@@ -144,8 +146,8 @@ def mcad_main(stage_descr, results_path,
                                                          debug_mode=False)
 
         # we set at 2 the minimum the number of cell to define a synchronous event
-        if activity_threshold < 2:
-            activity_threshold = 2
+        if activity_threshold < min_activity_threshold:
+            activity_threshold = min_activity_threshold
 
         plot_raster(spike_nums=spike_nums, path_results=results_path,
                     spike_train_format=False,
@@ -224,6 +226,11 @@ class MCADOutcome:
         self.silhouette_score = mcad_yaml_dict["silhouette_score"]
         self.n_cell_assemblies = mcad_yaml_dict["n_cell_assemblies"]
         self.comparison_key = comparison_key
+        self.first_bin_index = mcad_yaml_dict["first_bin_index"]
+        self.last_bin_index = mcad_yaml_dict["last_bin_index"]
+        self.spike_trains_bin_size = mcad_yaml_dict["spike_trains_bin_size"]
+
+        self.bins_tuple = (self.first_bin_index, self.last_bin_index)
 
     def best_mcad_outcome(self, other_mcad_outcome):
         if self.comparison_key == self.BEST_SILHOUETTE:
@@ -2278,7 +2285,6 @@ def compute_kmean(neurons_labels, cellsinpeak, n_surrogates_k_mean, n_trials_k_m
     #     if n_cluster in significant_sce_clusters:
     #         range_n_clusters_tmp.append(n_cluster)
     # range_n_clusters = np.array(range_n_clusters_tmp)
-
 
     cell_assemblies_struct_dict = dict()
     for n_cluster in range_n_clusters:

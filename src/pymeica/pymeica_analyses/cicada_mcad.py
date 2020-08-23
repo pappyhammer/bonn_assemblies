@@ -98,7 +98,7 @@ class CicadaMcad(CicadaAnalysis):
 
         self.add_int_values_arg_for_gui(arg_name="max_n_clusters", min_value=2, max_value=20,
                                         short_description="Maximum number of cell assemblies",
-                                        default_value=2, family_widget="kmeans_params")
+                                        default_value=4, family_widget="kmeans_params")
 
         self.add_int_values_arg_for_gui(arg_name="n_surrogates_k_mean_1st_try", min_value=5, max_value=100,
                                         short_description="N surrogates for kmean on 1st try",
@@ -115,6 +115,11 @@ class CicadaMcad(CicadaAnalysis):
         self.add_int_values_arg_for_gui(arg_name="k_mean_n_trials_2nd_try", min_value=2, max_value=200,
                                         short_description="N trials for kmean on 2nd try",
                                         default_value=25, family_widget="kmeans_params")
+
+        self.add_int_values_arg_for_gui(arg_name="perc_threshold_for_kmean_surrogates", min_value=90, max_value=99,
+                                        short_description="Percentile threshold for kmean surrogate silhouettes",
+                                        default_value=95, family_widget="kmeans_params")
+
 
         self.add_bool_option_for_gui(arg_name="apply_two_steps_k_mean", true_by_default=True,
                                      short_description="Apply kmeans in two steps",
@@ -133,6 +138,10 @@ class CicadaMcad(CicadaAnalysis):
         self.add_int_values_arg_for_gui(arg_name="perc_threshold_for_sce", min_value=90, max_value=99,
                                         short_description="Percentile threshold for synchronous activity surrogates",
                                         default_value=95, family_widget="se_params")
+
+        self.add_int_values_arg_for_gui(arg_name="min_activity_threshold", min_value=2, max_value=10,
+                                        short_description="Min nb of units in synchronous event",
+                                        default_value=2, family_widget="se_params")
 
         self.add_bool_option_for_gui(arg_name="remove_high_firing_cells", true_by_default=True,
                                      short_description="Apply firing rate threshold",
@@ -199,6 +208,10 @@ class CicadaMcad(CicadaAnalysis):
         k_mean_n_trials_1st_try = kwargs.get("k_mean_n_trials_1st_try", 5)
         k_mean_n_trials_2nd_try = kwargs.get("k_mean_n_trials_2nd_try", 25)
 
+        perc_threshold_for_kmean_surrogates = kwargs.get("perc_threshold_for_kmean_surrogates", 95)
+
+        min_activity_threshold = kwargs.get("min_activity_threshold", 2)
+
         if apply_two_steps_k_mean:
             n_surrogates_k_mean = (n_surrogates_k_mean_1st_try, n_surrogates_k_mean_2nd_try)
             k_mean_n_trials = (k_mean_n_trials_1st_try, k_mean_n_trials_2nd_try)
@@ -257,8 +270,10 @@ class CicadaMcad(CicadaAnalysis):
             # spike_struct = session_data.construct_spike_structure(sleep_stage_indices=[sleep_stage_index],
             #                                                       channels_starting_by=[side_to_analyse],
             #                                                       keeping_only_SU=not use_su_and_mu)
-            stage_descr = f"{side_to_analyse} stage {session_data.sleep_stages[sleep_stage_index].sleep_stage} " \
-                          f"index {sleep_stage_index}"
+            # stage_descr = f"{side_to_analyse} stage {session_data.sleep_stages[sleep_stage_index].sleep_stage} " \
+            #               f"index {sleep_stage_index}"
+            stage_descr = f"{side_to_analyse} index {sleep_stage_index} " \
+                          f"stage {session_data.sleep_stages[sleep_stage_index].sleep_stage}"
 
             # params to save in the yaml file
             params_to_save_dict = dict()
@@ -279,14 +294,16 @@ class CicadaMcad(CicadaAnalysis):
                       spike_trains_binsize=spike_trains_bin_size,
                       max_size_chunk_in_sec=max_size_chunk_in_sec,
                       min_size_chunk_in_sec=min_size_chunk_in_sec,
-                      spike_trains=spike_trains, cells_label=cells_label,
+                      spike_trains=spike_trains,
+                      cells_label=cells_label,
                       spike_nums=spike_nums,
                       subject_id=session_identifier,
+                      min_activity_threshold=min_activity_threshold,
                       params_to_save_dict=params_to_save_dict,
                       n_surrogate_activity_threshold=n_surrogate_activity_threshold,
                       perc_threshold_for_sce=perc_threshold_for_sce,
                       verbose=verbose,
-                      perc_threshold_for_kmean_surrogates=99)
+                      perc_threshold_for_kmean_surrogates=perc_threshold_for_kmean_surrogates)
 
             self.update_progressbar(time_started=self.analysis_start_time,
                                     increment_value=
