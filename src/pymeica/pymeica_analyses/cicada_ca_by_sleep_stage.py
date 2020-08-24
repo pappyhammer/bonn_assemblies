@@ -3,6 +3,7 @@ from time import time
 import numpy as np
 from pymeica.utils.display.distribution_plot import plot_box_plots
 from pymeica.utils.display.colors import BREWER_COLORS
+from sortedcontainers import SortedDict
 
 
 class CicadaCaBySleepStage(CicadaAnalysis):
@@ -191,15 +192,17 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, sleep_stages_to_analy
             if len(sleep_stage.mcad_outcomes) == 0:
                 # then there is no cell assembly
                 total_time_with_ca_by_stage[sleep_stage.sleep_stage][0] += sleep_stage.duration_sec
+                # print(f"{sleep_stage_index} - {sleep_stage.sleep_stage} sleep_stage.duration_sec: {sleep_stage.duration_sec}")
                 n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][0] += 1
                 continue
-
+            # print(f"{sleep_stage_index} - {sleep_stage.sleep_stage} N mcad_outcomes: {len(sleep_stage.mcad_outcomes)}")
             for bins_tuple, mcad_outcome in sleep_stage.mcad_outcomes.items():
                 n_bins = bins_tuple[1] - bins_tuple[0] + 1
                 duration_in_sec = (n_bins * mcad_outcome.spike_trains_bin_size) / 1000
                 # we round it as bin sometimes remove times if there are no spikes
-                if abs(duration_in_sec - sleep_stage.duration_sec) < 1:
+                if abs(duration_in_sec - sleep_stage.duration_sec) < 15:
                     duration_in_sec = sleep_stage.duration_sec
+                # print(f"{sleep_stage_index} - {sleep_stage.sleep_stage} duration_in_sec: {duration_in_sec}")
                 if mcad_outcome.n_cell_assemblies not in total_time_with_ca_by_stage[sleep_stage.sleep_stage]:
                     total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
                 total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += duration_in_sec
@@ -208,17 +211,22 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, sleep_stages_to_analy
                     n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
                 n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += 1
 
-    for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
-        box_plot_dict = dict()
+
+    # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
+    for sleep_stage in total_time_with_ca_by_stage.keys():
+        box_plot_dict = SortedDict()
+        total_duration_in_stage = 0
+        for duration_in_ca in total_time_with_ca_by_stage[sleep_stage].values():
+            total_duration_in_stage += duration_in_ca
         for n_cell_assemblies, duration_in_ca in total_time_with_ca_by_stage[sleep_stage].items():
             title = f"{n_cell_assemblies}\nn={n_chunks_by_stage_and_ca[sleep_stage][n_cell_assemblies]}"
-            box_plot_dict[title] = [(duration_in_ca / duration_in_stage) * 100]
+            box_plot_dict[title] = [(duration_in_ca / total_duration_in_stage) * 100]
         plot_box_plots(data_dict=box_plot_dict, title="",
                        filename=f"{subject_descr}cell_ass_in_stage_{sleep_stage}",
                        with_x_jitter=False,
                        path_results=results_path, with_scatters=True,
                        scatter_size=300, link_medians=True,
-                       y_label=f"Time proportion (%) over {int(duration_in_stage)} sec", colors=BREWER_COLORS,
+                       y_label=f"Time proportion (%) over {int(total_duration_in_stage)} sec", colors=BREWER_COLORS,
                        save_formats=save_formats)
 
 

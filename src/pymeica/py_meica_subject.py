@@ -477,6 +477,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                 first_bin_index = mcad_results_dict["first_bin_index"]
                 last_bin_index = mcad_results_dict["last_bin_index"]
                 bins_tuple = (first_bin_index, last_bin_index)
+
                 if sleep_stage_index not in mcad_by_sleep_stage:
                     mcad_by_sleep_stage[sleep_stage_index] = dict()
                 if bins_tuple not in mcad_by_sleep_stage[sleep_stage_index]:
@@ -496,10 +497,10 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                     else:
                         best_mcad_outcome = best_mcad_outcome.best_mcad_outcome(mcad_outcome)
                 # TODO: Add it to the sleep stage instance
-            sleep_stage = self.sleep_stages[sleep_stage_index]
-            
-            sleep_stage.add_mcad_outcome(mcad_outcome=best_mcad_outcome,
-                                         bins_tuple=best_mcad_outcome.bins_tuple)
+                sleep_stage = self.sleep_stages[sleep_stage_index]
+
+                sleep_stage.add_mcad_outcome(mcad_outcome=best_mcad_outcome,
+                                             bins_tuple=best_mcad_outcome.bins_tuple)
 
         print(f"mcad_by_sleep_stage {len(mcad_by_sleep_stage)}")
 

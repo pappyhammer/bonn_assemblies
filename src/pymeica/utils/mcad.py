@@ -131,11 +131,12 @@ def mcad_main(stage_descr, results_path,
     for spike_nums_index, spike_nums in enumerate(spike_nums_to_process):
         first_bin_index, last_bin_index = first_and_last_bins[spike_nums_index]
         if len(spike_nums_to_process) > 1:
-            print(f"Processing chunk n° {spike_nums_index} from bin {first_bin_index} to {last_bin_index}")
+            print(f"Processing chunk n° {spike_nums_index} / {len(spike_nums_to_process)-1} from "
+                  f"bin {first_bin_index} to {last_bin_index}")
 
         bin_descr = f"bins_{first_bin_index}_{last_bin_index}"
-        params_to_save_dict.update({"first_bin_index": first_bin_index})
-        params_to_save_dict.update({"last_bin_index": last_bin_index})
+        params_to_save_dict.update({"first_bin_index": int(first_bin_index)})
+        params_to_save_dict.update({"last_bin_index": int(last_bin_index)})
 
         activity_threshold = get_sce_detection_threshold(spike_nums=spike_nums,
                                                          window_duration=sliding_window_duration,
@@ -225,12 +226,24 @@ class MCADOutcome:
         self.mcad_yaml_dict = mcad_yaml_dict
         self.silhouette_score = mcad_yaml_dict["silhouette_score"]
         self.n_cell_assemblies = mcad_yaml_dict["n_cell_assemblies"]
+
         self.comparison_key = comparison_key
         self.first_bin_index = mcad_yaml_dict["first_bin_index"]
         self.last_bin_index = mcad_yaml_dict["last_bin_index"]
         self.spike_trains_bin_size = mcad_yaml_dict["spike_trains_bin_size"]
 
         self.bins_tuple = (self.first_bin_index, self.last_bin_index)
+
+        if self.n_cell_assemblies > 0:
+            # we make sure the cell assemblies are not empty, it happens that actually no syncrhonous event are associated
+            # to cell assemblies
+            no_cell_assemblies = True
+            for cell, list_events in mcad_yaml_dict["cells"].items():
+                if len(list_events) > 0:
+                    no_cell_assemblies = False
+                    break
+            if no_cell_assemblies:
+                self.n_cell_assemblies = 0
 
     def best_mcad_outcome(self, other_mcad_outcome):
         if self.comparison_key == self.BEST_SILHOUETTE:
