@@ -100,7 +100,7 @@ class SleepStage:
         self.number = number
         # first key is a tuple of int representing first_bin and last_bin
         # value is an instance of MCADOutcome, bin_size is available in MCADOutcome
-        self.mcad_outcomes = dict()
+        self.mcad_outcomes = SortedDict()
         # TODO: See to build an array with int key to get the MCADOutcome from a bin index or timestamps
 
     def add_mcad_outcome(self, mcad_outcome, bins_tuple):
@@ -121,7 +121,7 @@ class SleepStage:
         # result += f"duration (usec)  {self.duration}, "
         result += f"duration: {self.duration_sec:.1f} sec, {(self.duration / 1000000) / 60:.1f} min\n"
         if len(self.mcad_outcomes) == 0:
-            result += f" No MCAD outcome"
+            result += f" No MCAD outcome\n"
         else:
             for bins_tuple, mcad_outcome in self.mcad_outcomes.items():
                 first_bin_index = bins_tuple[0]
@@ -129,7 +129,15 @@ class SleepStage:
                 chunk_duration = (last_bin_index - first_bin_index + 1) * mcad_outcome.spike_trains_bin_size
                 # passing it in sec
                 chunk_duration /= 1000
-                result += f" {mcad_outcome.n_cell_assemblies} cell assemblies on {chunk_duration:.2f} sec segment."
+                result += f"{bins_tuple} {mcad_outcome.n_cell_assemblies} cell " \
+                          f"assemblies on {chunk_duration:.2f} sec segment.\n"
+                if mcad_outcome.n_cell_assemblies > 0:
+                    # cell_assembly is an instance of CellAssembly
+                    for ca_index, cell_assembly in enumerate(mcad_outcome.cell_assemblies):
+                        result += f"  CA n° {ca_index}: {cell_assembly.n_units} units, " \
+                                  f"{cell_assembly.n_repeats} repeats, " \
+                                  f"{cell_assembly.n_invariant_units} RU, " \
+                                  f"{cell_assembly.n_responsive_units} IU \n"
 
         # result += f",\n conversion_datetime  {self.conversion_datetime}, "
         # result += f"conversion_timestamp  {self.conversion_timestamp}, "
@@ -447,13 +455,14 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         self.n_microwires = len(self.spikes_by_microwire)
         self.available_micro_wires = np.array(self.available_micro_wires)
 
-    def load_mcad_data(self, data_path, macd_comparison_key=MCADOutcome.BEST_SILHOUETTE):
+    def load_mcad_data(self, data_path, macd_comparison_key=MCADOutcome.BEST_SILHOUETTE, min_repeat=3):
         """
         Explore all directories in data_path (recursively) and load the data issues from Malvache Cell Assemblies
         Detection code in yaml file.
         :param data_path:
         :param macd_comparison_key: indicate how to compare two outcomes for the same spike_trains section
         Choice among: MCADOutcome.BEST_SILHOUETTE & MCADOutcome.MAX_N_ASSEMBLIES
+        :param min_repeat: minimum of times of cell assembly should repeat to be considered True.
         :return:
         """
         if data_path is None:
@@ -491,18 +500,28 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                 best_mcad_outcome = None
                 for mcad_dict in mcad_dicts:
                     mcad_outcome = MCADOutcome(mcad_yaml_dict=mcad_dict,
-                                               comparison_key=macd_comparison_key)
+                                               comparison_key=macd_comparison_key,
+                                               subject=self)
                     if best_mcad_outcome is None:
                         best_mcad_outcome = mcad_outcome
                     else:
                         best_mcad_outcome = best_mcad_outcome.best_mcad_outcome(mcad_outcome)
-                # TODO: Add it to the sleep stage instance
+
+                if best_mcad_outcome.n_cell_assemblies == 0:
+                    # if no cell assembly we don't keep it
+                    continue
+
+                # if one cell assembly we test that it repeats a minimum of time
+                if best_mcad_outcome.n_cell_assemblies == 1:
+                    if np.max(best_mcad_outcome.n_repeats_in_each_cell_assembly()) < min_repeat:
+                        continue
+
                 sleep_stage = self.sleep_stages[sleep_stage_index]
 
                 sleep_stage.add_mcad_outcome(mcad_outcome=best_mcad_outcome,
                                              bins_tuple=best_mcad_outcome.bins_tuple)
 
-        print(f"mcad_by_sleep_stage {len(mcad_by_sleep_stage)}")
+        # print(f"mcad_by_sleep_stage {len(mcad_by_sleep_stage)}")
 
 
     def build_spike_nums(self, sleep_stage_index, side_to_analyse, keeping_only_SU, remove_high_firing_cells,
@@ -542,11 +561,11 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                                    index not in cells_below_threshold]
             cells_label = [label for index, label in enumerate(cells_label) if index in cells_below_threshold]
             n_cells = len(cells_label)
-            print(
-                f"{n_cells_total - n_cells} cells had firing rate > {firing_rate_threshold} Hz and have been removed.")
-            if len(cells_label_removed):
-                for index, label in cells_label_removed:
-                    print(f"{label}, {len(backup_spike_trains[index])}")
+            # print(
+            #     f"{n_cells_total - n_cells} cells had firing rate > {firing_rate_threshold} Hz and have been removed.")
+            # if len(cells_label_removed):
+            #     for index, label in cells_label_removed:
+            #         print(f"{label}, {len(backup_spike_trains[index])}")
 
         n_cells = len(spike_trains)
 

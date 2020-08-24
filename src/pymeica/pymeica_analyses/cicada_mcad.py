@@ -282,6 +282,7 @@ class CicadaMcad(CicadaAnalysis):
             params_to_save_dict["side"] = side_to_analyse
             params_to_save_dict["sleep_stage_name"] = str(session_data.sleep_stages[sleep_stage_index].sleep_stage)
             params_to_save_dict["sleep_stage_index"] = sleep_stage_index
+            params_to_save_dict["with_only_SU"] = bool(not use_su_and_mu)
 
             if remove_high_firing_cells:
                 params_to_save_dict["firing_rate_threshold"] = int(firing_rate_threshold)

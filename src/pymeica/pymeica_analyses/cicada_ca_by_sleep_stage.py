@@ -111,7 +111,6 @@ class CicadaCaBySleepStage(CicadaAnalysis):
             return
 
         sleep_stages_selected_by_session = kwargs["sleep_stages_selected"]
-        # print(f"sleep_stages_selected {sleep_stages_selected_by_session}")
 
         save_formats = kwargs["save_formats"]
         if save_formats is None:
@@ -192,17 +191,17 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, sleep_stages_to_analy
             if len(sleep_stage.mcad_outcomes) == 0:
                 # then there is no cell assembly
                 total_time_with_ca_by_stage[sleep_stage.sleep_stage][0] += sleep_stage.duration_sec
-                # print(f"{sleep_stage_index} - {sleep_stage.sleep_stage} sleep_stage.duration_sec: {sleep_stage.duration_sec}")
                 n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][0] += 1
                 continue
-            # print(f"{sleep_stage_index} - {sleep_stage.sleep_stage} N mcad_outcomes: {len(sleep_stage.mcad_outcomes)}")
+
+            time_cover_by_bin_tuples = 0
             for bins_tuple, mcad_outcome in sleep_stage.mcad_outcomes.items():
                 n_bins = bins_tuple[1] - bins_tuple[0] + 1
                 duration_in_sec = (n_bins * mcad_outcome.spike_trains_bin_size) / 1000
                 # we round it as bin sometimes remove times if there are no spikes
                 if abs(duration_in_sec - sleep_stage.duration_sec) < 15:
                     duration_in_sec = sleep_stage.duration_sec
-                # print(f"{sleep_stage_index} - {sleep_stage.sleep_stage} duration_in_sec: {duration_in_sec}")
+                time_cover_by_bin_tuples += duration_in_sec
                 if mcad_outcome.n_cell_assemblies not in total_time_with_ca_by_stage[sleep_stage.sleep_stage]:
                     total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
                 total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += duration_in_sec
@@ -210,6 +209,13 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, sleep_stages_to_analy
                 if mcad_outcome.n_cell_assemblies not in n_chunks_by_stage_and_ca[sleep_stage.sleep_stage]:
                     n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
                 n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += 1
+
+            # in case some chunks will give no MCADOutcome
+            if abs(time_cover_by_bin_tuples - sleep_stage.duration_sec) < 20:
+                n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][0] += max(1, (abs(time_cover_by_bin_tuples -
+                                                                                    sleep_stage.duration_sec) // 120))
+                total_time_with_ca_by_stage[sleep_stage.sleep_stage][0] += abs(time_cover_by_bin_tuples -
+                                                                               sleep_stage.duration_sec)
 
 
     # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():

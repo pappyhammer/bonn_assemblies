@@ -131,7 +131,7 @@ def mcad_main(stage_descr, results_path,
     for spike_nums_index, spike_nums in enumerate(spike_nums_to_process):
         first_bin_index, last_bin_index = first_and_last_bins[spike_nums_index]
         if len(spike_nums_to_process) > 1:
-            print(f"Processing chunk n° {spike_nums_index} / {len(spike_nums_to_process)-1} from "
+            print(f"Processing chunk n° {spike_nums_index} / {len(spike_nums_to_process) - 1} from "
                   f"bin {first_bin_index} to {last_bin_index}")
 
         bin_descr = f"bins_{first_bin_index}_{last_bin_index}"
@@ -210,19 +210,67 @@ def mcad_main(stage_descr, results_path,
                                                        with_cells_in_cluster_seq_sorted=with_cells_in_cluster_seq_sorted)
 
 
+class CellAssembly:
+    """
+    Represent a unique cell assembly. Composed of n cells, for each cell indicate when and how many times
+    it repeats. It also give the proportion of Responsive Units...
+    """
+
+    def __init__(self, sleep_stage, mcad_outcome, cells, cells_label,
+                 is_responsive_units_dict, is_invariant_units_dict,
+                 cells_synchronous_event):
+        """
+
+        :param sleep_stage: Instance of SleepStage
+        :param cells: (list of int) index of the cells
+        :param cells_label: list of string, representing cells' label
+        :param is_responsive_units_dict: key is the cell label, value is a list of 2 int, representing the evening
+        and morning preferred stimulus (-1 means no response)
+        :param cells_synchronous_event: (dict) key is the cell index (a value in cells), and the value is a list of
+        list of 2 int representing the first and last bin index of each synchronous event in this cell assembly
+        """
+        self.sleep_stage = sleep_stage
+        self.mcad_outcome = mcad_outcome
+        self.cells = cells
+        self.cells_label = cells_label
+        self.is_responsive_units_dict = is_responsive_units_dict
+        self.is_invariant_units_dict = is_invariant_units_dict
+        self.cells_synchronous_event = cells_synchronous_event
+
+    @property
+    def n_units(self):
+        return len(self.cells)
+
+    @property
+    def n_invariant_units(self):
+        return len(self.is_invariant_units_dict)
+
+    @property
+    def n_responsive_units(self):
+        return len(self.is_responsive_units_dict)
+
+    @property
+    def n_repeats(self):
+        return len(self.cells_synchronous_event[self.cells[0]])
+
+    #TODO: Compute the probability of this cell assembly taking in consideration the RU & IU
+
 class MCADOutcome:
     BEST_SILHOUETTE = "best_silhouette"
 
     MAX_N_ASSEMBLIES = "max_n_assemblies"
 
-    def __init__(self, mcad_yaml_dict, comparison_key):
+    def __init__(self, mcad_yaml_dict, comparison_key, subject):
         """
         Allows to easily access outcome of a MCAD that has been computed using the yaml recorded to load the instance.
         :param mcad_yaml_dict: (dict) should be loaded from the yaml file created from the MCAD
         :param comparison_key: (str) should be on the constant of MCADOutcome. Indicate which criteria to take
         in consideration to compare two instances of MCADOutcome.
+        :param subject: PyMeicaSubject instance
         """
-
+        # TODO: See to remove cell assemblies with less a certain number of repeat
+        #  so far filter is done in load_mcad_data()
+        self.subject = subject
         self.mcad_yaml_dict = mcad_yaml_dict
         self.silhouette_score = mcad_yaml_dict["silhouette_score"]
         self.n_cell_assemblies = mcad_yaml_dict["n_cell_assemblies"]
@@ -231,6 +279,32 @@ class MCADOutcome:
         self.first_bin_index = mcad_yaml_dict["first_bin_index"]
         self.last_bin_index = mcad_yaml_dict["last_bin_index"]
         self.spike_trains_bin_size = mcad_yaml_dict["spike_trains_bin_size"]
+        self.sleep_stage_index = mcad_yaml_dict["sleep_stage_index"]
+        self.sleep_stage = self.subject.sleep_stages[self.sleep_stage_index]
+        self.side = mcad_yaml_dict["side"]
+        # only SU, or SU & MU
+        self.with_only_SU = mcad_yaml_dict.get("with_only_SU", False)
+        # dict with key an int representing the index of the unit in the spike_train that produce this results
+        # value is the label with SU cluster channel side region micro_wire
+        self.cell_index_to_label = mcad_yaml_dict["cell_index_to_label"]
+        self.remove_high_firing_cells = "firing_rate_threshold" in mcad_yaml_dict
+        self.firing_rate_threshold = mcad_yaml_dict.get("firing_rate_threshold", 0)
+        self.cells_synchronous_event = mcad_yaml_dict.get("cells", None)
+        # (dict) key is the cell index (a value in cells), and the value is a list of
+        #    list of 2 int representing the first and last bin index of each syncrhonous event in this cell assembly
+        self.single_cell_assemblies = mcad_yaml_dict.get("single_cell_assemblies", None)
+
+        # index of the list correspond to cell index, and value is a boolean indicating if the cell is IU ou RU
+        self.is_cell_responsive_unit = [False] * len(self.cell_index_to_label)
+        self.is_cell_invariant_unit = [False] * len(self.cell_index_to_label)
+        if len(subject.is_responsive_units_dict) > 0:
+            for cell_index, cell_label in self.cell_index_to_label.items():
+                if cell_label in subject.is_responsive_units_dict:
+                    self.is_cell_responsive_unit[cell_index] = True
+        if len(subject.is_invariant_units_dict) > 0:
+            for cell_index, cell_label in self.cell_index_to_label.items():
+                if cell_label in subject.is_invariant_units_dict:
+                    self.is_cell_invariant_unit[cell_index] = True
 
         self.bins_tuple = (self.first_bin_index, self.last_bin_index)
 
@@ -245,7 +319,49 @@ class MCADOutcome:
             if no_cell_assemblies:
                 self.n_cell_assemblies = 0
 
+        self.spike_trains, self.spike_nums, \
+        cells_label = subject.build_spike_nums(sleep_stage_index=self.sleep_stage_index,
+                                               side_to_analyse=self.side,
+                                               keeping_only_SU=self.with_only_SU,
+                                               remove_high_firing_cells=self.remove_high_firing_cells,
+                                               firing_rate_threshold=self.firing_rate_threshold,
+                                               spike_trains_binsize=self.spike_trains_bin_size)
+        # instance of CellAssembly
+        self.cell_assemblies = []
+        if (self.n_cell_assemblies > 0) and (self.single_cell_assemblies is not None):
+            for cell_assembly_index, cells_in_assembly in self.single_cell_assemblies.items():
+                cells_label_in_assembly = [l for index_l, l in enumerate(cells_label) if index_l in cells_in_assembly]
+                # self.is_cell_responsive_unit = [False] * len(self.cell_index_to_label)
+                is_responsive_units_dict = dict()
+                is_invariant_units_dict = dict()
+                for cell_label in cells_label_in_assembly:
+                    if cell_label in subject.is_responsive_units_dict:
+                        is_responsive_units_dict[cell_label] = subject.is_responsive_units_dict[cell_label]
+                    if cell_label in subject.is_invariant_units_dict:
+                        is_invariant_units_dict[cell_label] = subject.is_invariant_units_dict[cell_label]
+
+                cells_synchronous_event_in_cell_assembly = dict()
+                for cell in cells_in_assembly:
+                    cells_synchronous_event_in_cell_assembly[cell] = self.cells_synchronous_event[cell]
+                cell_assembly = CellAssembly(sleep_stage=self.sleep_stage, mcad_outcome=self,
+                                             cells=cells_in_assembly, cells_label=cells_label_in_assembly,
+                                             is_responsive_units_dict=is_responsive_units_dict,
+                                             is_invariant_units_dict=is_invariant_units_dict,
+                                             cells_synchronous_event=cells_synchronous_event_in_cell_assembly)
+                self.cell_assemblies.append(cell_assembly)
+    # TODO: Make a function that allows to know how many RU / IU in each cell assembly
+    #  then how many are stastically
+
+    def n_repeats_in_each_cell_assembly(self):
+        return [ca.n_repeats for ca in self.cell_assemblies]
+
     def best_mcad_outcome(self, other_mcad_outcome):
+        # first testing if one or the other has no cell assembly
+        if self.n_cell_assemblies == 0:
+            return other_mcad_outcome
+        if other_mcad_outcome.n_cell_assemblies == 0:
+            return self
+
         if self.comparison_key == self.BEST_SILHOUETTE:
             return self._mcad_with_best_silhouette(other_mcad_outcome=other_mcad_outcome)
         if self.comparison_key == self.MAX_N_ASSEMBLIES:
