@@ -84,7 +84,7 @@ class CicadaMcad(CicadaAnalysis):
 
         # TODO: Add in long description the number of units on each side
         self.add_choices_arg_for_gui(arg_name="side_to_analyse", choices=["L", "R"],
-                                     default_value="L",
+                                     default_value="R",
                                      short_description="Side to analyse",
                                      multiple_choices=False,
                                      family_widget="data_params")

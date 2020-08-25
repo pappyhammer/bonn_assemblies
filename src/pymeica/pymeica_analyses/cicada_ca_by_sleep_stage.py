@@ -78,6 +78,15 @@ class CicadaCaBySleepStage(CicadaAnalysis):
                                      multiple_choices=True,
                                      family_widget="sleep_stages")
 
+        side_choices = dict()
+        for session_data in self._data_to_analyse:
+            side_choices[session_data] = ["L", "R", "L&R"]
+        self.add_choices_arg_for_gui(arg_name="side_to_analyse", choices=["L", "R", "L&R"],
+                                     default_value="R",
+                                     short_description="Side to analyse",
+                                     multiple_choices=False,
+                                     family_widget="data_params")
+
         self.add_image_format_package_for_gui()
 
         self.add_verbose_arg_for_gui()
@@ -111,6 +120,8 @@ class CicadaCaBySleepStage(CicadaAnalysis):
             return
 
         sleep_stages_selected_by_session = kwargs["sleep_stages_selected"]
+
+        side_to_analyse = kwargs["side_to_analyse"]
 
         save_formats = kwargs["save_formats"]
         if save_formats is None:
@@ -148,6 +159,7 @@ class CicadaCaBySleepStage(CicadaAnalysis):
             # self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
 
         plot_ca_proportion_night_by_sleep_stage(subjects_data=self._data_to_analyse,
+                                                side_to_analyse=side_to_analyse,
                                                 sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
                                                 results_path=self.get_results_path(),
                                                 save_formats=save_formats)
@@ -156,11 +168,13 @@ class CicadaCaBySleepStage(CicadaAnalysis):
         print(f"Analysis run in {time() - self.analysis_start_time} sec")
 
 
-def plot_ca_proportion_night_by_sleep_stage(subjects_data, sleep_stages_to_analyse_by_subject, results_path,
+def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse,
+                                            sleep_stages_to_analyse_by_subject, results_path,
                                             save_formats):
     """
 
     :param subjects_data:
+    :param side_to_analyse: (str)value 'L', 'R', or 'L&R'
     :param sleep_stages_to_analyse_by_subject:
     :param results_path:
     :param save_formats:
@@ -175,48 +189,57 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, sleep_stages_to_analy
     for subject_data in subjects_data:
         subject_id = subject_data.identifier
         subject_descr = subject_descr + subject_id + "_"
-        for sleep_stage_index in sleep_stages_to_analyse_by_subject[subject_id]:
-            sleep_stage = subject_data.sleep_stages[sleep_stage_index]
-            # sleep_stage.sleep_stage is a string representing the sleep stage like 'W' or '3'
-            if sleep_stage.sleep_stage not in total_sleep_duration_by_stage:
-                total_sleep_duration_by_stage[sleep_stage.sleep_stage] = 0
-                n_chunks_by_stage_and_ca[sleep_stage.sleep_stage] = dict()
-                total_time_with_ca_by_stage[sleep_stage.sleep_stage] = dict()
+        if side_to_analyse == "L&R":
+            sides = ['L', 'R']
+        else:
+            sides = [side_to_analyse]
+        for side in sides:
+            print(f'plot_ca_proportion_night_by_sleep_stage side {side}')
+            for sleep_stage_index in sleep_stages_to_analyse_by_subject[subject_id]:
+                sleep_stage = subject_data.sleep_stages[sleep_stage_index]
+                # sleep_stage.sleep_stage is a string representing the sleep stage like 'W' or '3'
+                if sleep_stage.sleep_stage not in total_sleep_duration_by_stage:
+                    total_sleep_duration_by_stage[sleep_stage.sleep_stage] = 0
+                    n_chunks_by_stage_and_ca[sleep_stage.sleep_stage] = dict()
+                    total_time_with_ca_by_stage[sleep_stage.sleep_stage] = dict()
 
-            # adding to 0 to all
-            if 0 not in total_time_with_ca_by_stage[sleep_stage.sleep_stage]:
-                total_time_with_ca_by_stage[sleep_stage.sleep_stage][0] = 0
-                n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][0] = 0
-            total_sleep_duration_by_stage[sleep_stage.sleep_stage] += sleep_stage.duration_sec
-            if len(sleep_stage.mcad_outcomes) == 0:
-                # then there is no cell assembly
-                total_time_with_ca_by_stage[sleep_stage.sleep_stage][0] += sleep_stage.duration_sec
-                n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][0] += 1
-                continue
+                # adding to 0 to all
+                if 0 not in total_time_with_ca_by_stage[sleep_stage.sleep_stage]:
+                    total_time_with_ca_by_stage[sleep_stage.sleep_stage][0] = 0
+                    n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][0] = 0
+                total_sleep_duration_by_stage[sleep_stage.sleep_stage] += sleep_stage.duration_sec
+                if len(sleep_stage.mcad_outcomes) == 0:
+                    # then there is no cell assembly
+                    total_time_with_ca_by_stage[sleep_stage.sleep_stage][0] += sleep_stage.duration_sec
+                    n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][0] += 1
+                    continue
 
-            time_cover_by_bin_tuples = 0
-            for bins_tuple, mcad_outcome in sleep_stage.mcad_outcomes.items():
-                n_bins = bins_tuple[1] - bins_tuple[0] + 1
-                duration_in_sec = (n_bins * mcad_outcome.spike_trains_bin_size) / 1000
-                # we round it as bin sometimes remove times if there are no spikes
-                if abs(duration_in_sec - sleep_stage.duration_sec) < 15:
-                    duration_in_sec = sleep_stage.duration_sec
-                time_cover_by_bin_tuples += duration_in_sec
-                if mcad_outcome.n_cell_assemblies not in total_time_with_ca_by_stage[sleep_stage.sleep_stage]:
-                    total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
-                total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += duration_in_sec
+                time_cover_by_bin_tuples = 0
+                for bins_tuple, mcad_outcome in sleep_stage.mcad_outcomes.items():
+                    if mcad_outcome.side != side:
 
-                if mcad_outcome.n_cell_assemblies not in n_chunks_by_stage_and_ca[sleep_stage.sleep_stage]:
-                    n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
-                n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += 1
+                        # only keeping the outcome from the correct side
+                        continue
+                    n_bins = bins_tuple[1] - bins_tuple[0] + 1
+                    duration_in_sec = (n_bins * mcad_outcome.spike_trains_bin_size) / 1000
+                    # we round it as bin sometimes remove times if there are no spikes
+                    if abs(duration_in_sec - sleep_stage.duration_sec) < 15:
+                        duration_in_sec = sleep_stage.duration_sec
+                    time_cover_by_bin_tuples += duration_in_sec
+                    if mcad_outcome.n_cell_assemblies not in total_time_with_ca_by_stage[sleep_stage.sleep_stage]:
+                        total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
+                    total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += duration_in_sec
 
-            # in case some chunks will give no MCADOutcome
-            if abs(time_cover_by_bin_tuples - sleep_stage.duration_sec) < 20:
-                n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][0] += max(1, (abs(time_cover_by_bin_tuples -
-                                                                                    sleep_stage.duration_sec) // 120))
-                total_time_with_ca_by_stage[sleep_stage.sleep_stage][0] += abs(time_cover_by_bin_tuples -
-                                                                               sleep_stage.duration_sec)
+                    if mcad_outcome.n_cell_assemblies not in n_chunks_by_stage_and_ca[sleep_stage.sleep_stage]:
+                        n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
+                    n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += 1
 
+                # in case some chunks will give no MCADOutcome
+                if abs(time_cover_by_bin_tuples - sleep_stage.duration_sec) > 20:
+                    n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][0] += max(1, (abs(time_cover_by_bin_tuples -
+                                                                                        sleep_stage.duration_sec) // 120))
+                    total_time_with_ca_by_stage[sleep_stage.sleep_stage][0] += abs(time_cover_by_bin_tuples -
+                                                                                   sleep_stage.duration_sec)
 
     # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
     for sleep_stage in total_time_with_ca_by_stage.keys():
@@ -224,11 +247,14 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, sleep_stages_to_analy
         total_duration_in_stage = 0
         for duration_in_ca in total_time_with_ca_by_stage[sleep_stage].values():
             total_duration_in_stage += duration_in_ca
+        # in case no cell assemblies would happen in this stage, in particular the 0 cell assembly is always added
+        if total_duration_in_stage == 0:
+            total_duration_in_stage = total_sleep_duration_by_stage[sleep_stage]
         for n_cell_assemblies, duration_in_ca in total_time_with_ca_by_stage[sleep_stage].items():
             title = f"{n_cell_assemblies}\nn={n_chunks_by_stage_and_ca[sleep_stage][n_cell_assemblies]}"
             box_plot_dict[title] = [(duration_in_ca / total_duration_in_stage) * 100]
         plot_box_plots(data_dict=box_plot_dict, title="",
-                       filename=f"{subject_descr}cell_ass_in_stage_{sleep_stage}",
+                       filename=f"{subject_descr}cell_ass_in_stage_{sleep_stage}_{side_to_analyse}",
                        with_x_jitter=False,
                        path_results=results_path, with_scatters=True,
                        scatter_size=300, link_medians=True,

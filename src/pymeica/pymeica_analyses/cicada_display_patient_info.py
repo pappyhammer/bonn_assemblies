@@ -56,6 +56,15 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
                                                          "to find the yaml file containing the results.",
                                         key_names=None, family_widget="mcad")
 
+        # side_choices = dict()
+        # for session_data in self._data_to_analyse:
+        #     side_choices[session_data] = ["L", "R", "L&R"]
+        # self.add_choices_arg_for_gui(arg_name="side_to_analyse", choices=["L", "R", "L&R"],
+        #                              default_value="R",
+        #                              short_description="Side to consider",
+        #                              multiple_choices=False,
+        #                              family_widget="data_params")
+
 
     def update_original_data(self):
         """
@@ -75,6 +84,8 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
         CicadaAnalysis.run_analysis(self, **kwargs)
 
         mcad_data_path = kwargs.get("mcad_data_path")
+
+        # side_to_analyse = kwargs["side_to_analyse"]
 
         n_sessions = len(self._data_to_analyse)
 

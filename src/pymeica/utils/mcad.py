@@ -26,6 +26,8 @@ import matplotlib as mpl
 import matplotlib.gridspec as gridspec
 from sortedcontainers import SortedList, SortedDict
 
+from scipy.special import comb
+
 from pymeica.utils.spike_trains import create_spike_train_neo_format, spike_trains_threshold_by_firing_rate, \
     get_sce_detection_threshold, detect_sce_with_sliding_window
 
@@ -236,6 +238,22 @@ class CellAssembly:
         self.is_responsive_units_dict = is_responsive_units_dict
         self.is_invariant_units_dict = is_invariant_units_dict
         self.cells_synchronous_event = cells_synchronous_event
+        self.probability_score_pre_computed = None
+
+    @property
+    def probability_score(self):
+        if self.probability_score_pre_computed is not None:
+            # print(f"self.probability_score_pre_computed {self.probability_score_pre_computed}")
+            return self.probability_score_pre_computed
+        n_responsive_units_total = self.mcad_outcome.n_responsive_units
+        n_responsive_units_in_ass = self.n_responsive_units
+        cell_ass_prob = (comb(n_responsive_units_total, n_responsive_units_in_ass) *
+                         comb((self.mcad_outcome.n_cells_in_total - n_responsive_units_total),
+                              (len(self.cells) - n_responsive_units_in_ass))) / comb(self.mcad_outcome.n_cells_in_total,
+                                                                                     len(self.cells))
+        self.probability_score_pre_computed = cell_ass_prob
+        # print(f"cell_ass_prob {cell_ass_prob}")
+        return cell_ass_prob
 
     @property
     def n_units(self):
@@ -287,6 +305,8 @@ class MCADOutcome:
         # dict with key an int representing the index of the unit in the spike_train that produce this results
         # value is the label with SU cluster channel side region micro_wire
         self.cell_index_to_label = mcad_yaml_dict["cell_index_to_label"]
+        # number of cells (units) in total
+        self.n_cells_in_total = len(self.cell_index_to_label)
         self.remove_high_firing_cells = "firing_rate_threshold" in mcad_yaml_dict
         self.firing_rate_threshold = mcad_yaml_dict.get("firing_rate_threshold", 0)
         self.cells_synchronous_event = mcad_yaml_dict.get("cells", None)
@@ -351,6 +371,14 @@ class MCADOutcome:
                 self.cell_assemblies.append(cell_assembly)
     # TODO: Make a function that allows to know how many RU / IU in each cell assembly
     #  then how many are stastically
+
+    @property
+    def n_responsive_units(self):
+        """
+        Number of responsive units in this mcad outcome, could be different than subject if RUhas been filtered
+        :return:
+        """
+        return np.sum(self.is_cell_responsive_unit)
 
     def n_repeats_in_each_cell_assembly(self):
         return [ca.n_repeats for ca in self.cell_assemblies]

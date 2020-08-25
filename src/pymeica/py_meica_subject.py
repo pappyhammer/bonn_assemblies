@@ -129,7 +129,7 @@ class SleepStage:
                 chunk_duration = (last_bin_index - first_bin_index + 1) * mcad_outcome.spike_trains_bin_size
                 # passing it in sec
                 chunk_duration /= 1000
-                result += f"{bins_tuple} {mcad_outcome.n_cell_assemblies} cell " \
+                result += f"{bins_tuple} {mcad_outcome.side} {mcad_outcome.n_cell_assemblies} cell " \
                           f"assemblies on {chunk_duration:.2f} sec segment.\n"
                 if mcad_outcome.n_cell_assemblies > 0:
                     # cell_assembly is an instance of CellAssembly
@@ -137,7 +137,8 @@ class SleepStage:
                         result += f"  CA n° {ca_index}: {cell_assembly.n_units} units, " \
                                   f"{cell_assembly.n_repeats} repeats, " \
                                   f"{cell_assembly.n_invariant_units} RU, " \
-                                  f"{cell_assembly.n_responsive_units} IU \n"
+                                  f"{cell_assembly.n_responsive_units} IU, " \
+                                  f"score: {cell_assembly.probability_score:.4f} \n"
 
         # result += f",\n conversion_datetime  {self.conversion_datetime}, "
         # result += f"conversion_timestamp  {self.conversion_timestamp}, "
@@ -454,6 +455,20 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
 
         self.n_microwires = len(self.spikes_by_microwire)
         self.available_micro_wires = np.array(self.available_micro_wires)
+
+    def elapsed_time_from_falling_asleep(self, sleep_stage):
+        """
+        Looking at the time of the first sleep sleep_stage (it could start with Wake), return the number
+        of time that separate it in seconds (could be negative if the stage is the wake one before sleep)
+        :param sleep_stage:
+        :return:
+        """
+        for sleep_stage_index in range(len(self.sleep_stages)):
+            ss = self.sleep_stages[sleep_stage_index]
+            if ss.sleep_stage == "W":
+                continue
+            return (sleep_stage.start_time - ss.sleep_stage.start_time) / 1000000
+        return -1
 
     def load_mcad_data(self, data_path, macd_comparison_key=MCADOutcome.BEST_SILHOUETTE, min_repeat=3):
         """
@@ -857,7 +872,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                     for d in to_del:
                         micro_wire_to_keep = micro_wire_to_keep[micro_wire_to_keep != d]
 
-                print(f"n units in {channels_starting_by}: {len(micro_wire_to_keep)}")
+                # print(f"n units in {channels_starting_by}: {len(micro_wire_to_keep)}")
 
                 invariant_keys = list(self.is_invariant_units_dict.keys())
                 responsive_keys = list(self.is_responsive_units_dict.keys())
@@ -895,7 +910,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
             if channels_starting_by is None:
                 print(f"From both side: n_su {n_su}, n_mu {n_mu}")
             else:
-                print(f"For side {channels_starting_by}: n_su {n_su}, n_mu {n_mu}")
+                print(f"For side {channels_starting_by}: n_su {n_su}, n_mu {n_mu}, total {n_su+n_mu}")
             print(f"mu_by_area_count: {mu_by_area_count}")
             print(f"su_by_area_count: {su_by_area_count}")
             print("")
