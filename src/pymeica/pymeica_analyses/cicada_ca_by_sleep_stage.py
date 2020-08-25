@@ -2,6 +2,7 @@ from cicada.analysis.cicada_analysis import CicadaAnalysis
 from time import time
 import numpy as np
 from pymeica.utils.display.distribution_plot import plot_box_plots
+from pymeica.utils.display.pymeica_plots import plot_scatter_family
 from pymeica.utils.display.colors import BREWER_COLORS
 from sortedcontainers import SortedDict
 
@@ -19,6 +20,7 @@ class CicadaCaBySleepStage(CicadaAnalysis):
 
         # from the choice list, give the index corresponding in the sleep_stages list
         self.sleep_stage_selection_to_index = dict()
+        self.stages_name = ["W", "1", "2", "3"]
 
     def copy(self):
         """
@@ -87,6 +89,13 @@ class CicadaCaBySleepStage(CicadaAnalysis):
                                      multiple_choices=False,
                                      family_widget="data_params")
 
+
+        for stage_name in self.stages_name:
+            self.add_color_arg_for_gui(arg_name=f"color_by_stage_{stage_name}",
+                                       default_value=(1, 1, 1, 1.),
+                                       short_description=f"Color for stage {stage_name}",
+                                       long_description=None, family_widget="stage_color")
+
         self.add_image_format_package_for_gui()
 
         self.add_verbose_arg_for_gui()
@@ -122,6 +131,11 @@ class CicadaCaBySleepStage(CicadaAnalysis):
         sleep_stages_selected_by_session = kwargs["sleep_stages_selected"]
 
         side_to_analyse = kwargs["side_to_analyse"]
+
+        color_by_sleep_stage_dict = dict()
+        for stage_name in self.stages_name:
+            stage_color = kwargs[f"color_by_stage_{stage_name}"]
+            color_by_sleep_stage_dict[stage_name] = stage_color
 
         save_formats = kwargs["save_formats"]
         if save_formats is None:
@@ -160,6 +174,7 @@ class CicadaCaBySleepStage(CicadaAnalysis):
 
         plot_ca_proportion_night_by_sleep_stage(subjects_data=self._data_to_analyse,
                                                 side_to_analyse=side_to_analyse,
+                                                color_by_sleep_stage_dict=color_by_sleep_stage_dict,
                                                 sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
                                                 results_path=self.get_results_path(),
                                                 save_formats=save_formats)
@@ -168,7 +183,7 @@ class CicadaCaBySleepStage(CicadaAnalysis):
         print(f"Analysis run in {time() - self.analysis_start_time} sec")
 
 
-def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse,
+def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse, color_by_sleep_stage_dict,
                                             sleep_stages_to_analyse_by_subject, results_path,
                                             save_formats):
     """
@@ -242,7 +257,9 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse,
                                                                                    sleep_stage.duration_sec)
 
     # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
+    scatter_data_dict = SortedDict()
     for sleep_stage in total_time_with_ca_by_stage.keys():
+        scatter_data_dict[sleep_stage] = [[], [], []]
         box_plot_dict = SortedDict()
         total_duration_in_stage = 0
         for duration_in_ca in total_time_with_ca_by_stage[sleep_stage].values():
@@ -252,7 +269,11 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse,
             total_duration_in_stage = total_sleep_duration_by_stage[sleep_stage]
         for n_cell_assemblies, duration_in_ca in total_time_with_ca_by_stage[sleep_stage].items():
             title = f"{n_cell_assemblies}\nn={n_chunks_by_stage_and_ca[sleep_stage][n_cell_assemblies]}"
-            box_plot_dict[title] = [(duration_in_ca / total_duration_in_stage) * 100]
+            time_proportion = (duration_in_ca / total_duration_in_stage) * 100
+            box_plot_dict[title] = [time_proportion]
+            scatter_data_dict[sleep_stage][0].append(n_cell_assemblies)
+            scatter_data_dict[sleep_stage][1].append(time_proportion)
+            scatter_data_dict[sleep_stage][2].append(n_chunks_by_stage_and_ca[sleep_stage][n_cell_assemblies])
         plot_box_plots(data_dict=box_plot_dict, title="",
                        filename=f"{subject_descr}cell_ass_in_stage_{sleep_stage}_{side_to_analyse}",
                        with_x_jitter=False,
@@ -260,5 +281,23 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse,
                        scatter_size=300, link_medians=True,
                        y_label=f"Time proportion (%) over {int(total_duration_in_stage)} sec", colors=BREWER_COLORS,
                        save_formats=save_formats)
-
-
+    # print(f"scatter_data_dict {scatter_data_dict}")
+    # TODO: Order each list in scatter_data_dict accordin to the number of cell assembly
+    #  Add in legend the duration of the sleep stage (make an arg just for legend labels)
+    plot_scatter_family(data_dict=scatter_data_dict,
+                        colors_dict=color_by_sleep_stage_dict,
+                        filename=f"{subject_descr}cell_ass_over_stages_{side_to_analyse}",
+                        y_label=f"Time proportion (%)",
+                        path_results=results_path, # y_lim=[0, 100],
+                        x_label="N cells in cell assemblies",
+                        y_log=False,
+                        scatter_size=300,
+                        scatter_alpha=1,
+                        background_color="black",
+                        link_scatter=True,
+                        labels_color="white",
+                        with_x_jitter=0.1,
+                        with_y_jitter=None,
+                        x_labels_rotation=None,
+                        save_formats=save_formats,
+                        with_timestamp_in_file_name=True)

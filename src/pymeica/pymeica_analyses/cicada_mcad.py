@@ -256,7 +256,8 @@ class CicadaMcad(CicadaAnalysis):
                 sleep_stage_index = self.sleep_stage_selection_to_index[sleep_stage]
             print(" ")
             print("-" * 50)
-            print(f"Cicada MCAD: {side_to_analyse} side, sleep stage index {sleep_stage_index}, "
+            print(f"Cicada MCAD: {side_to_analyse} side, sleep_stage "
+                  f"{session_data.sleep_stages[sleep_stage_index].sleep_stage}, index {sleep_stage_index}, "
                   f"{session_data.sleep_stages[sleep_stage_index].duration_sec} sec")
             print("-" * 50)
 
