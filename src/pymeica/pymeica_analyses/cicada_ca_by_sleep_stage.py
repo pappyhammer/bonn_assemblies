@@ -167,7 +167,11 @@ class CicadaCaBySleepStage(CicadaAnalysis):
             sleep_stages_selected = [self.sleep_stage_selection_to_index[session_identifier][ss]
                                      for ss in sleep_stages_selected]
 
-            session_data.load_mcad_data(data_path=mcad_data_path)
+            if side_to_analyse == "L&R":
+                side_to_load = None
+            else:
+                side_to_load = side_to_analyse
+            session_data.load_mcad_data(data_path=mcad_data_path, side_to_load=side_to_load)
             sleep_stages_to_analyse_by_subject[session_identifier] = sleep_stages_selected
             # session_data.descriptive_stats()
             # self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
@@ -195,6 +199,7 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse, colo
     :param save_formats:
     :return:
     """
+    # print("plot_ca_proportion_night_by_sleep_stage")
 
     subject_descr = ""
     total_sleep_duration_by_stage = dict()
@@ -209,7 +214,7 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse, colo
         else:
             sides = [side_to_analyse]
         for side in sides:
-            print(f'plot_ca_proportion_night_by_sleep_stage side {side}')
+            # print(f'plot_ca_proportion_night_by_sleep_stage side {side}')
             for sleep_stage_index in sleep_stages_to_analyse_by_subject[subject_id]:
                 sleep_stage = subject_data.sleep_stages[sleep_stage_index]
                 # sleep_stage.sleep_stage is a string representing the sleep stage like 'W' or '3'
@@ -282,9 +287,27 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                        y_label=f"Time proportion (%) over {int(total_duration_in_stage)} sec", colors=BREWER_COLORS,
                        save_formats=save_formats)
     # print(f"scatter_data_dict {scatter_data_dict}")
-    # TODO: Order each list in scatter_data_dict accordin to the number of cell assembly
-    #  Add in legend the duration of the sleep stage (make an arg just for legend labels)
-    plot_scatter_family(data_dict=scatter_data_dict,
+
+    scatter_data_dict_sorted = SortedDict()
+    for sleep_stage, scatter_data in scatter_data_dict.items():
+        scatter_data_dict_sorted[sleep_stage] = []
+        arg_sort = np.argsort(scatter_data[0])
+        scatter_data_dict_sorted[sleep_stage].append(np.asarray(scatter_data[0])[arg_sort])
+        scatter_data_dict_sorted[sleep_stage].append(np.asarray(scatter_data[1])[arg_sort])
+        scatter_data_dict_sorted[sleep_stage].append(np.asarray(scatter_data[2])[arg_sort])
+
+    label_to_legend_dict = dict()
+    for sleep_stage in scatter_data_dict.keys():
+        total_duration_in_stage = 0
+        for duration_in_ca in total_time_with_ca_by_stage[sleep_stage].values():
+            total_duration_in_stage += duration_in_ca
+        # in case no cell assemblies would happen in this stage, in particular the 0 cell assembly is always added
+        if total_duration_in_stage == 0:
+            total_duration_in_stage = total_sleep_duration_by_stage[sleep_stage]
+        label_to_legend_dict[sleep_stage] = f"{sleep_stage}: {total_duration_in_stage/60:.1f} min"
+
+    plot_scatter_family(data_dict=scatter_data_dict_sorted,
+                        label_to_legend=label_to_legend_dict,
                         colors_dict=color_by_sleep_stage_dict,
                         filename=f"{subject_descr}cell_ass_over_stages_{side_to_analyse}",
                         y_label=f"Time proportion (%)",

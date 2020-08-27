@@ -470,7 +470,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
             return (sleep_stage.start_time - ss.sleep_stage.start_time) / 1000000
         return -1
 
-    def load_mcad_data(self, data_path, macd_comparison_key=MCADOutcome.BEST_SILHOUETTE, min_repeat=3):
+    def load_mcad_data(self, data_path, side_to_load=None, macd_comparison_key=MCADOutcome.BEST_SILHOUETTE, min_repeat=3):
         """
         Explore all directories in data_path (recursively) and load the data issues from Malvache Cell Assemblies
         Detection code in yaml file.
@@ -478,6 +478,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         :param macd_comparison_key: indicate how to compare two outcomes for the same spike_trains section
         Choice among: MCADOutcome.BEST_SILHOUETTE & MCADOutcome.MAX_N_ASSEMBLIES
         :param min_repeat: minimum of times of cell assembly should repeat to be considered True.
+        :param side_to_load: (str) if None, both side are loaded, otherwise should be 'L' or 'R'
         :return:
         """
         if data_path is None:
@@ -489,6 +490,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         # value is a list of dict representing the content of the yaml file
         mcad_by_sleep_stage = dict()
         for mcad_file in mcad_files:
+            # print(f"in load_mcad_data: {os.path.basename(mcad_file)}")
             with open(mcad_file, 'r') as stream:
                 mcad_results_dict = yaml.load(stream, Loader=yaml.Loader)
                 # first we check if it contains some of the field typical of mcad file
@@ -501,13 +503,15 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                 first_bin_index = mcad_results_dict["first_bin_index"]
                 last_bin_index = mcad_results_dict["last_bin_index"]
                 bins_tuple = (first_bin_index, last_bin_index)
-
+                side = mcad_results_dict["side"]
+                if (side_to_load is not None) and (side != side_to_load):
+                    continue
                 if sleep_stage_index not in mcad_by_sleep_stage:
                     mcad_by_sleep_stage[sleep_stage_index] = dict()
                 if bins_tuple not in mcad_by_sleep_stage[sleep_stage_index]:
                     mcad_by_sleep_stage[sleep_stage_index][bins_tuple] = []
                 mcad_by_sleep_stage[sleep_stage_index][bins_tuple].append(mcad_results_dict)
-
+        print("In load_mcad_data end for loop")
         # now we want to keep only one result for each chunk a given sleep_stage
         # and add it to the SleepStage instance
         for sleep_stage_index in mcad_by_sleep_stage.keys():
@@ -535,6 +539,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
 
                 sleep_stage.add_mcad_outcome(mcad_outcome=best_mcad_outcome,
                                              bins_tuple=best_mcad_outcome.bins_tuple)
+                # print(f"In load_mcad_data 2nd loop: {sleep_stage_index}, {bins_tuple}")
 
         # print(f"mcad_by_sleep_stage {len(mcad_by_sleep_stage)}")
 

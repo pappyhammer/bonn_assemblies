@@ -6,6 +6,7 @@ from datetime import datetime
 def plot_scatter_family(data_dict, colors_dict,
                         filename,
                         y_label,
+                        label_to_legend=None,
                         path_results=None, y_lim=None,
                         x_label=None,
                         y_log=False,
@@ -25,6 +26,7 @@ def plot_scatter_family(data_dict, colors_dict,
     second one is the y-values and third one is the number of elements that allows to get this number (like number
     of sessions)
     :param colors_dict = key is a label, value is a color
+    :param label_to_legend: (dict) if not None, key are label of data_dict, value is the label to be displayed as legend
     :param filename:
     :param y_label:
     :param y_lim: tuple of int,
@@ -61,12 +63,13 @@ def plot_scatter_family(data_dict, colors_dict,
         while len(colors_scatters) < len(y_pos):
             colors_scatters.extend(colors_dict[label])
 
+        label_legend = label_to_legend[label] if label_to_legend is not None else label
         ax1.scatter(x_pos, y_pos,
                     color=colors_dict[label],
                     alpha=scatter_alpha,
                     marker="o",
                     edgecolors=labels_color,
-                    label=label,
+                    label=label_legend,
                     s=scatter_size, zorder=21)
 
         if link_scatter:
