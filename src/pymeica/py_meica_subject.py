@@ -186,7 +186,6 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         # replace by the code of the type of unit: SU, MU etc... 1 = MU  2 = SU -1 = Artif.
         self.spikes_time_by_microwire = dict()
 
-
         self.channel_info_by_microwire = None
 
         # list of SleepStage instances (in chronological order)
@@ -467,10 +466,13 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
             ss = self.sleep_stages[sleep_stage_index]
             if ss.sleep_stage == "W":
                 continue
-            return (sleep_stage.start_time - ss.sleep_stage.start_time) / 1000000
+            return (sleep_stage.start_time - ss.start_time) / 1000000
         return -1
 
-    def load_mcad_data(self, data_path, side_to_load=None, macd_comparison_key=MCADOutcome.BEST_SILHOUETTE, min_repeat=3):
+    def load_mcad_data(self, data_path, side_to_load=None,
+                       sleep_stage_indices_to_load=None,
+                       macd_comparison_key=MCADOutcome.BEST_SILHOUETTE,
+                       min_repeat=3):
         """
         Explore all directories in data_path (recursively) and load the data issues from Malvache Cell Assemblies
         Detection code in yaml file.
@@ -479,6 +481,8 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         Choice among: MCADOutcome.BEST_SILHOUETTE & MCADOutcome.MAX_N_ASSEMBLIES
         :param min_repeat: minimum of times of cell assembly should repeat to be considered True.
         :param side_to_load: (str) if None, both side are loaded, otherwise should be 'L' or 'R'
+        :param sleep_stage_indices_to_load: (list of int) if None, all stages are loaded, otherwise
+        only the ones listed
         :return:
         """
         if data_path is None:
@@ -506,12 +510,15 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
                 side = mcad_results_dict["side"]
                 if (side_to_load is not None) and (side != side_to_load):
                     continue
+                if sleep_stage_indices_to_load is not None:
+                    if sleep_stage_index not in sleep_stage_indices_to_load:
+                        continue
                 if sleep_stage_index not in mcad_by_sleep_stage:
                     mcad_by_sleep_stage[sleep_stage_index] = dict()
                 if bins_tuple not in mcad_by_sleep_stage[sleep_stage_index]:
                     mcad_by_sleep_stage[sleep_stage_index][bins_tuple] = []
                 mcad_by_sleep_stage[sleep_stage_index][bins_tuple].append(mcad_results_dict)
-        print("In load_mcad_data end for loop")
+
         # now we want to keep only one result for each chunk a given sleep_stage
         # and add it to the SleepStage instance
         for sleep_stage_index in mcad_by_sleep_stage.keys():

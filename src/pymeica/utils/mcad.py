@@ -238,20 +238,20 @@ class CellAssembly:
         self.is_responsive_units_dict = is_responsive_units_dict
         self.is_invariant_units_dict = is_invariant_units_dict
         self.cells_synchronous_event = cells_synchronous_event
-        self.probability_score_pre_computed = None
+        self._probability_score_pre_computed = None
 
     @property
     def probability_score(self):
-        if self.probability_score_pre_computed is not None:
-            # print(f"self.probability_score_pre_computed {self.probability_score_pre_computed}")
-            return self.probability_score_pre_computed
+        if self._probability_score_pre_computed is not None:
+            # print(f"self._probability_score_pre_computed {self._probability_score_pre_computed}")
+            return self._probability_score_pre_computed
         n_responsive_units_total = self.mcad_outcome.n_responsive_units
         n_responsive_units_in_ass = self.n_responsive_units
         cell_ass_prob = (comb(n_responsive_units_total, n_responsive_units_in_ass) *
                          comb((self.mcad_outcome.n_cells_in_total - n_responsive_units_total),
                               (len(self.cells) - n_responsive_units_in_ass))) / comb(self.mcad_outcome.n_cells_in_total,
                                                                                      len(self.cells))
-        self.probability_score_pre_computed = cell_ass_prob
+        self._probability_score_pre_computed = cell_ass_prob
         # print(f"cell_ass_prob {cell_ass_prob}")
         return cell_ass_prob
 

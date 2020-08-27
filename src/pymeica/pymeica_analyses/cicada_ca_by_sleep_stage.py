@@ -20,7 +20,7 @@ class CicadaCaBySleepStage(CicadaAnalysis):
 
         # from the choice list, give the index corresponding in the sleep_stages list
         self.sleep_stage_selection_to_index = dict()
-        self.stages_name = ["W", "1", "2", "3"]
+        self.stages_name = ["W", "1", "2", "3", "R"]
 
     def copy(self):
         """

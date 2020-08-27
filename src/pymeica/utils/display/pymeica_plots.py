@@ -13,11 +13,13 @@ def plot_scatter_family(data_dict, colors_dict,
                         scatter_size=200,
                         scatter_alpha=1,
                         background_color="black",
+                        lines_plot_values=None,
                         link_scatter=False,
                         labels_color="white",
                         with_x_jitter=0.2,
                         with_y_jitter=None,
                         x_labels_rotation=None,
+                        h_lines_y_values=None,
                         save_formats="pdf",
                         with_timestamp_in_file_name=True):
     """
@@ -28,6 +30,8 @@ def plot_scatter_family(data_dict, colors_dict,
     :param colors_dict = key is a label, value is a color
     :param label_to_legend: (dict) if not None, key are label of data_dict, value is the label to be displayed as legend
     :param filename:
+    :param lines_plot_values: (dict) same keys as data_dict, value is a list of 2 list of int or float, representing
+    x & y value of plot to trace
     :param y_label:
     :param y_lim: tuple of int,
     :param link_scatter: draw a line between scatters
@@ -46,8 +50,13 @@ def plot_scatter_family(data_dict, colors_dict,
     # data_list = []
     # scatter_text_list = []
     # medians_values = []
+    min_x_value = 10000
+    max_x_value = 0
 
     for label, data_to_scatters in data_dict.items():
+        min_x_value = min(min_x_value, np.min(data_to_scatters[0]))
+        max_x_value = max(max_x_value, np.max(data_to_scatters[0]))
+
         # Adding jitter
         if (with_x_jitter > 0) and (with_x_jitter < 1):
             x_pos = [x + ((np.random.random_sample() - 0.5) * with_x_jitter) for x in data_to_scatters[0]]
@@ -74,7 +83,19 @@ def plot_scatter_family(data_dict, colors_dict,
 
         if link_scatter:
             ax1.plot(x_pos, y_pos, zorder=30, color=colors_dict[label],
-                     linewidth=2)
+                     linewidth=1)
+
+        if lines_plot_values is not None:
+            if label in lines_plot_values:
+                x_pos, y_pos = lines_plot_values[label]
+                ax1.plot(x_pos, y_pos, zorder=35, color=colors_dict[label],
+                         linewidth=2)
+
+    if h_lines_y_values is not None:
+        for y_value in h_lines_y_values:
+            ax1.hlines(y_value, min_x_value,
+                       max_x_value, color=labels_color, linewidth=0.5,
+                       linestyles="dashed", zorder=25)
 
     ax1.set_ylabel(f"{y_label}", fontsize=30, labelpad=20)
     if y_lim is not None:
