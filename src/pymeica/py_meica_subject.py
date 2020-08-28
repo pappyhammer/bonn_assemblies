@@ -89,7 +89,7 @@ class SleepStage:
         # timstamps are float, it's needed to multiple by 10^3 to get the real value, with represents microseconds
         self.start_time = start_time * 1000
         self.stop_time = stop_time * 1000
-        self.stop_time = stop_time * 1000
+        # self.stop_time = stop_time * 1000
         # duration is in microseconds
         self.duration = self.stop_time - self.start_time
         self.duration_sec = self.duration / 1000000
@@ -277,6 +277,19 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
 
         return True
 
+    # def get_sleep_stage_epoch(self, sleep_stage_name):
+    #     """
+    #     Return the epoch of a given type of slepe stage.
+    #     :param sleep_stage_name:
+    #     :return: List of list of 2 int represent the timestamps in sec of the beginning and end of each epoch
+    #     """
+    #     epochs = []
+    #
+    #     for sleep_stage in self.sleep_stages:
+    #         if sleep_stage.sleep_stage != sleep_stage_name:
+    #             continue
+    #         epochs.append(sleep_stage.start_time, sleep_stage.stop_time)
+
     def load_data(self):
         CicadaAnalysisFormatWrapper.load_data(self)
         if self.verbose:
@@ -459,7 +472,7 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         """
         Looking at the time of the first sleep sleep_stage (it could start with Wake), return the number
         of time that separate it in seconds (could be negative if the stage is the wake one before sleep)
-        :param sleep_stage:
+        :param sleep_stage: SleepStage instance
         :return:
         """
         for sleep_stage_index in range(len(self.sleep_stages)):

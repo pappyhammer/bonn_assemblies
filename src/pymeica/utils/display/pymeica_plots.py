@@ -30,8 +30,8 @@ def plot_scatter_family(data_dict, colors_dict,
     :param colors_dict = key is a label, value is a color
     :param label_to_legend: (dict) if not None, key are label of data_dict, value is the label to be displayed as legend
     :param filename:
-    :param lines_plot_values: (dict) same keys as data_dict, value is a list of 2 list of int or float, representing
-    x & y value of plot to trace
+    :param lines_plot_values: (dict) same keys as data_dict, value is a list of list of 2 list of int or float,
+    representing x & y value of plot to trace
     :param y_label:
     :param y_lim: tuple of int,
     :param link_scatter: draw a line between scatters
@@ -87,9 +87,10 @@ def plot_scatter_family(data_dict, colors_dict,
 
         if lines_plot_values is not None:
             if label in lines_plot_values:
-                x_pos, y_pos = lines_plot_values[label]
-                ax1.plot(x_pos, y_pos, zorder=35, color=colors_dict[label],
-                         linewidth=2)
+                for lines_coordinates in lines_plot_values[label]:
+                    x_pos, y_pos = lines_coordinates
+                    ax1.plot(x_pos, y_pos, zorder=35, color=colors_dict[label],
+                             linewidth=2)
 
     if h_lines_y_values is not None:
         for y_value in h_lines_y_values:

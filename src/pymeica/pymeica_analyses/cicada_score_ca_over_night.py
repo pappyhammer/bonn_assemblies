@@ -312,7 +312,8 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                     current_time_in_sleep_stage += chunk_duration_in_sec
 
     # moving winodw to average over time the scores
-    avg_score_by_stage_dict = dict()
+    # key is the sleep stage name, value is a list of list of list of 2 float representing (x, y) for line plots
+    avg_score_hypno_by_stage_dict = dict()
     # in hours
     window_length = 0.5
     step_length = 0.25
@@ -324,20 +325,35 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
         max_time = max(max_time, np.max(times))
     bin_edges = np.arange(min_time, max_time + step_length, step_length)
 
+    y_pos_sep = -0.25
+    y_pos_sleep_stage = y_pos_sep
     for sleep_stage_name, scatter_values in ca_scores_by_stage_dict.items():
-        avg_score_by_stage_dict[sleep_stage_name] = [[], []]
+        avg_score_hypno_by_stage_dict[sleep_stage_name] = [[[], []]]
         times = scatter_values[0]
         scores = np.asarray(scatter_values[1])
         for step_index, bin_edge in enumerate(bin_edges[:-1]):
             next_bin_edge = bin_edges[step_index+1]
             center_time = (bin_edge + next_bin_edge) / 2
             indices = np.where(np.logical_and(times >= bin_edge, times <= next_bin_edge))[0]
-            avg_score_by_stage_dict[sleep_stage_name][0].append(center_time)
+            avg_score_hypno_by_stage_dict[sleep_stage_name][0][0].append(center_time)
             if len(indices) == 0:
-                avg_score_by_stage_dict[sleep_stage_name][1].append(0)
+                avg_score_hypno_by_stage_dict[sleep_stage_name][0][1].append(0)
             else:
                 avg_score = np.mean(scores[indices])
-                avg_score_by_stage_dict[sleep_stage_name][1].append(avg_score)
+                avg_score_hypno_by_stage_dict[sleep_stage_name][0][1].append(avg_score)
+
+        for sleep_stage_index in np.sort(sleep_stages_to_analyse_by_subject[subject_id]):
+            sleep_stage = subject_data.sleep_stages[sleep_stage_index]
+            if sleep_stage.sleep_stage != sleep_stage_name:
+                continue
+            elapsed_time = subject_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage)
+            if elapsed_time < 0:
+                continue
+            new_epoch = [[elapsed_time / 3600, (elapsed_time+sleep_stage.duration_sec) / 3600],
+                         [y_pos_sleep_stage, y_pos_sleep_stage]]
+            avg_score_hypno_by_stage_dict[sleep_stage_name].append(new_epoch)
+        y_pos_sleep_stage += y_pos_sep
+
 
     h_lines_y_values = [-1*np.log(0.05)]
     # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
@@ -350,7 +366,7 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                  f"{(ca_time_sec / 60):.1f} min over {(total_time_sec / 60):.1f} " \
                  f"min ({ratio_ca_time_total_time:.1f} %)"
         label_to_legend_dict = {sleep_stage_name: f"{sleep_stage_name}: {legend}"}
-        avg_score_dict = {sleep_stage_name: avg_score_by_stage_dict[sleep_stage_name]}
+        avg_score_dict = {sleep_stage_name: avg_score_hypno_by_stage_dict[sleep_stage_name]}
         plot_scatter_family(data_dict=data_dict,
                             label_to_legend=label_to_legend_dict,
                             colors_dict=color_by_sleep_stage_dict,
@@ -378,7 +394,7 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
         total_time_sec = time_total_by_stage_dict[sleep_stage_name]
         ratio_ca_time_total_time = (ca_time_sec / total_time_sec) * 100
         legend = f"(x{n_assemblies_by_stage_dict[sleep_stage_name]}) " \
-                 f"{(ca_time_sec / 60):.1f} min over {(ratio_ca_time_total_time / 60):.1f} " \
+                 f"{(ca_time_sec / 60):.1f} min over {(total_time_sec / 60):.1f} " \
                  f"min ({ratio_ca_time_total_time:.1f} %)"
         label_to_legend_dict[sleep_stage_name] = f"{sleep_stage_name}: {legend}"
 
@@ -394,7 +410,7 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                         h_lines_y_values=h_lines_y_values,
                         scatter_size=150,
                         scatter_alpha=0.8,
-                        lines_plot_values=avg_score_by_stage_dict,
+                        lines_plot_values=avg_score_hypno_by_stage_dict,
                         background_color="black",
                         link_scatter=False,
                         labels_color="white",
