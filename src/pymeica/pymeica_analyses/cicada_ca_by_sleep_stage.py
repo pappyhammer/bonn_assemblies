@@ -5,6 +5,8 @@ from pymeica.utils.display.distribution_plot import plot_box_plots
 from pymeica.utils.display.pymeica_plots import plot_scatter_family
 from pymeica.utils.display.colors import BREWER_COLORS
 from sortedcontainers import SortedDict
+from cicada.utils.misc import validate_indices_in_string_format, \
+    extract_indices_from_string
 
 
 class CicadaCaBySleepStage(CicadaAnalysis):
@@ -63,6 +65,18 @@ class CicadaCaBySleepStage(CicadaAnalysis):
                                                               "previsouly done for those session, indicate the path where"
                                                               "to find the yaml file containing the results.",
                                              key_names=None, family_widget="mcad")
+
+        for session_data in self._data_to_analyse:
+            session_id = session_data.identifier
+            self.add_field_text_option_for_gui(arg_name=f"sleep_stages_selected_by_text_{session_id}",
+                                               default_value="",
+                                               short_description="Stage sleep indices",
+                                               long_description="You can indicate the "
+                                                                "sleep stages indices in text field, "
+                                                                "such as '1-4 6 15-17'to "
+                                                                "make a group "
+                                                                "with stages 1 to 4, 6 and 15 to 17.",
+                                               family_widget="sleep_stages")
 
         choices_dict = dict()
         for session_data in self._data_to_analyse:
@@ -159,13 +173,18 @@ class CicadaCaBySleepStage(CicadaAnalysis):
         for session_index, session_data in enumerate(self._data_to_analyse):
             session_identifier = session_data.identifier
             print(f"-------------- {session_identifier} -------------- ")
-            sleep_stages_selected = sleep_stages_selected_by_session[session_identifier]
+            sleep_stage_text_selection = kwargs.get(f"sleep_stages_selected_by_text_{session_identifier}", "")
+            sleep_stages_selected = []
+            if validate_indices_in_string_format(sleep_stage_text_selection):
+                sleep_stages_selected = extract_indices_from_string(sleep_stage_text_selection)
+            if len(sleep_stages_selected) == 0:
+                sleep_stages_selected = sleep_stages_selected_by_session[session_identifier]
+                sleep_stages_selected = [self.sleep_stage_selection_to_index[session_identifier][ss]
+                                         for ss in sleep_stages_selected]
             if len(sleep_stages_selected) == 0:
                 print(f"No sleep stage selected for {session_identifier}")
                 sleep_stages_to_analyse_by_subject[session_identifier] = []
                 continue
-            sleep_stages_selected = [self.sleep_stage_selection_to_index[session_identifier][ss]
-                                     for ss in sleep_stages_selected]
 
             if side_to_analyse == "L&R":
                 side_to_load = None

@@ -23,7 +23,7 @@ def plot_scatter_family(data_dict, colors_dict,
                         save_formats="pdf",
                         with_timestamp_in_file_name=True):
     """
-
+    Plot family of scatters (same color and label) with possibly lines that are associated to it.
     :param data_dict: key is a label, value is a list of 3 list of int, of same size, first one are the x-value,
     second one is the y-values and third one is the number of elements that allows to get this number (like number
     of sessions)

@@ -7,14 +7,14 @@ from pymeica.utils.display.pymeica_plots import plot_scatter_family
 from sortedcontainers import SortedDict
 
 
-class CicadaScoreCaOverNight(CicadaAnalysis):
+class CicadaCaRepeatOverNight(CicadaAnalysis):
     def __init__(self, config_handler=None):
         """
         """
-        long_description = '<p align="center"><b>Cell assembly score over night</b></p><br>'
-        CicadaAnalysis.__init__(self, name="Cell assembly score",
+        long_description = '<p align="center"><b>Cell assembly repeats over night</b></p><br>'
+        CicadaAnalysis.__init__(self, name="Cell assembly repeats",
                                 family_id="Over night evolution",
-                                short_description="Display cell assembly score over night",
+                                short_description="Display cell assembly repeats over night",
                                 long_description=long_description,
                                 config_handler=config_handler,
                                 accepted_data_formats=["PyMEICA"])
@@ -29,7 +29,7 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
         Returns:
 
         """
-        analysis_copy = CicadaScoreCaOverNight(config_handler=self.config_handler)
+        analysis_copy = CicadaCaRepeatOverNight(config_handler=self.config_handler)
         self.transfer_attributes_to_tabula_rasa_copy(analysis_copy=analysis_copy)
 
         return analysis_copy
@@ -205,23 +205,23 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
             # session_data.descriptive_stats()
             # self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
 
-        plot_ca_score_over_night_by_sleep_stage(subjects_data=self._data_to_analyse,
-                                                side_to_analyse=side_to_analyse,
-                                                color_by_sleep_stage_dict=color_by_sleep_stage_dict,
-                                                sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
-                                                only_ca_with_ri=only_ca_with_ri,
-                                                min_repeat_in_ca=min_repeat_in_ca,
-                                                results_path=self.get_results_path(),
-                                                save_formats=save_formats)
+        plot_ca_repeat_over_night_by_sleep_stage(subjects_data=self._data_to_analyse,
+                                                 side_to_analyse=side_to_analyse,
+                                                 color_by_sleep_stage_dict=color_by_sleep_stage_dict,
+                                                 sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
+                                                 only_ca_with_ri=only_ca_with_ri,
+                                                 min_repeat_in_ca=min_repeat_in_ca,
+                                                 results_path=self.get_results_path(),
+                                                 save_formats=save_formats)
 
         self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)
         print(f"Score cell assemblies over night analysis run in {time() - self.analysis_start_time:.2f} sec")
 
 
-def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, color_by_sleep_stage_dict,
-                                            only_ca_with_ri, min_repeat_in_ca,
-                                            sleep_stages_to_analyse_by_subject, results_path,
-                                            save_formats):
+def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, color_by_sleep_stage_dict,
+                                             only_ca_with_ri, min_repeat_in_ca,
+                                             sleep_stages_to_analyse_by_subject, results_path,
+                                             save_formats):
     """
 
     :param subjects_data:
@@ -236,7 +236,7 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
     subject_descr = ""
     # key is sleep_stage_name, value is a list of 2 list, first list contains the time elapsed since falling asleep,
     # second is the score of the assembly (2 list are the same length)
-    ca_scores_by_stage_dict = dict()
+    ca_repeat_by_stage_dict = dict()
     time_by_stage_with_ca_dict = dict()
     time_total_by_stage_dict = dict()
     n_assemblies_by_stage_dict = dict()
@@ -280,8 +280,8 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                         continue
 
                     # init
-                    if sleep_stage.sleep_stage not in ca_scores_by_stage_dict:
-                        ca_scores_by_stage_dict[sleep_stage.sleep_stage] = [[], []]
+                    if sleep_stage.sleep_stage not in ca_repeat_by_stage_dict:
+                        ca_repeat_by_stage_dict[sleep_stage.sleep_stage] = [[], []]
                         n_assemblies_by_stage_dict[sleep_stage.sleep_stage] = 0
 
                     # instances of CellAssembly
@@ -300,22 +300,23 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                             time_by_stage_with_ca_dict[sleep_stage.sleep_stage] += chunk_duration_in_sec
                             time_elapsed_in_sec = elapsed_time + current_time_in_sleep_stage
                             time_elapsed_in_hours = time_elapsed_in_sec / 3600
-                        ca_scores_by_stage_dict[sleep_stage.sleep_stage][0].append(time_elapsed_in_hours)
-                        # negative log value
-                        ca_scores_by_stage_dict[sleep_stage.sleep_stage][1].append(-1*np.log(score))
+                        ca_repeat_by_stage_dict[sleep_stage.sleep_stage][0].append(time_elapsed_in_hours)
+                        # n repeat normalizing by the number of minutes in the chunk
+                        ca_repeat_by_stage_dict[sleep_stage.sleep_stage][1].append(cell_assembly.n_repeats /
+                                                                                   (chunk_duration_in_sec / 60))
                         cell_assembly_added = True
 
                     current_time_in_sleep_stage += chunk_duration_in_sec
 
-    # moving winodw to average over time the scores
+    # moving winodw to average over time the repeats
     # key is the sleep stage name, value is a list of list of list of 2 float representing (x, y) for line plots
-    avg_score_hypno_by_stage_dict = dict()
+    avg_repeat_hypno_by_stage_dict = dict()
     # in hours
     window_length = 0.5
     step_length = 0.25
     min_time = 10000
     max_time = 0
-    for sleep_stage_name, scatter_values in ca_scores_by_stage_dict.items():
+    for sleep_stage_name, scatter_values in ca_repeat_by_stage_dict.items():
         times = scatter_values[0]
         min_time = min(min_time, np.min(times))
         max_time = max(max_time, np.max(times))
@@ -323,20 +324,20 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
 
     y_pos_sep = -0.25
     y_pos_sleep_stage = y_pos_sep
-    for sleep_stage_name, scatter_values in ca_scores_by_stage_dict.items():
-        avg_score_hypno_by_stage_dict[sleep_stage_name] = [[[], []]]
+    for sleep_stage_name, scatter_values in ca_repeat_by_stage_dict.items():
+        avg_repeat_hypno_by_stage_dict[sleep_stage_name] = [[[], []]]
         times = scatter_values[0]
-        scores = np.asarray(scatter_values[1])
+        repeats = np.asarray(scatter_values[1])
         for step_index, bin_edge in enumerate(bin_edges[:-1]):
             next_bin_edge = bin_edges[step_index+1]
             center_time = (bin_edge + next_bin_edge) / 2
             indices = np.where(np.logical_and(times >= bin_edge, times <= next_bin_edge))[0]
-            avg_score_hypno_by_stage_dict[sleep_stage_name][0][0].append(center_time)
+            avg_repeat_hypno_by_stage_dict[sleep_stage_name][0][0].append(center_time)
             if len(indices) == 0:
-                avg_score_hypno_by_stage_dict[sleep_stage_name][0][1].append(0)
+                avg_repeat_hypno_by_stage_dict[sleep_stage_name][0][1].append(0)
             else:
-                avg_score = np.mean(scores[indices])
-                avg_score_hypno_by_stage_dict[sleep_stage_name][0][1].append(avg_score)
+                avg_repeat = np.mean(repeats[indices])
+                avg_repeat_hypno_by_stage_dict[sleep_stage_name][0][1].append(avg_repeat)
 
         for sleep_stage_index in np.sort(sleep_stages_to_analyse_by_subject[subject_id]):
             sleep_stage = subject_data.sleep_stages[sleep_stage_index]
@@ -347,12 +348,12 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                 continue
             new_epoch = [[elapsed_time / 3600, (elapsed_time+sleep_stage.duration_sec) / 3600],
                          [y_pos_sleep_stage, y_pos_sleep_stage]]
-            avg_score_hypno_by_stage_dict[sleep_stage_name].append(new_epoch)
+            avg_repeat_hypno_by_stage_dict[sleep_stage_name].append(new_epoch)
         y_pos_sleep_stage += y_pos_sep
 
     h_lines_y_values = [-1*np.log(0.05)]
     # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
-    for sleep_stage_name, scatter_values in ca_scores_by_stage_dict.items():
+    for sleep_stage_name, scatter_values in ca_repeat_by_stage_dict.items():
         data_dict = {sleep_stage_name: scatter_values}
         ca_time_sec = time_by_stage_with_ca_dict[sleep_stage_name]
         total_time_sec = time_total_by_stage_dict[sleep_stage_name]
@@ -361,19 +362,19 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                  f"{(ca_time_sec / 60):.1f} min over {(total_time_sec / 60):.1f} " \
                  f"min ({ratio_ca_time_total_time:.1f} %)"
         label_to_legend_dict = {sleep_stage_name: f"{sleep_stage_name}: {legend}"}
-        avg_score_dict = {sleep_stage_name: avg_score_hypno_by_stage_dict[sleep_stage_name]}
+        avg_repeat_dict = {sleep_stage_name: avg_repeat_hypno_by_stage_dict[sleep_stage_name]}
         plot_scatter_family(data_dict=data_dict,
                             label_to_legend=label_to_legend_dict,
                             colors_dict=color_by_sleep_stage_dict,
-                            filename=f"{subject_descr}score_ca_over_night_stage_{sleep_stage_name}_{side_to_analyse}",
-                            y_label=f"Score  (-log(p))",
+                            filename=f"{subject_descr}ca_repeat_over_night_stage_{sleep_stage_name}_{side_to_analyse}",
+                            y_label=f"N repeats / min",
                             path_results=results_path,  # y_lim=[0, 100],
                             x_label="Time (hours)",
                             y_log=False,
                             h_lines_y_values=h_lines_y_values,
                             scatter_size=150,
                             scatter_alpha=0.8,
-                            lines_plot_values=avg_score_dict,
+                            lines_plot_values=avg_repeat_dict,
                             background_color="black",
                             link_scatter=False,
                             labels_color="white",
@@ -384,7 +385,7 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                             with_timestamp_in_file_name=True)
 
     label_to_legend_dict = dict()
-    for sleep_stage_name in ca_scores_by_stage_dict.keys():
+    for sleep_stage_name in ca_repeat_by_stage_dict.keys():
         ca_time_sec = time_by_stage_with_ca_dict[sleep_stage_name]
         total_time_sec = time_total_by_stage_dict[sleep_stage_name]
         ratio_ca_time_total_time = (ca_time_sec / total_time_sec) * 100
@@ -394,18 +395,18 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
         label_to_legend_dict[sleep_stage_name] = f"{sleep_stage_name}: {legend}"
 
     # TODO: See to add option to have a different shape for a cell assembly depending of if it contains RU
-    plot_scatter_family(data_dict=ca_scores_by_stage_dict,
+    plot_scatter_family(data_dict=ca_repeat_by_stage_dict,
                         label_to_legend=label_to_legend_dict,
                         colors_dict=color_by_sleep_stage_dict,
-                        filename=f"{subject_descr}score_ca_over_night_{side_to_analyse}",
-                        y_label=f"Score (-log(p))",
+                        filename=f"{subject_descr}ca_repeat_over_night_stage_{side_to_analyse}",
+                        y_label=f"N repeats / min",
                         path_results=results_path,  # y_lim=[0, 100],
                         x_label="Time (hours)",
                         y_log=False,
                         h_lines_y_values=h_lines_y_values,
                         scatter_size=150,
                         scatter_alpha=0.8,
-                        lines_plot_values=avg_score_hypno_by_stage_dict,
+                        lines_plot_values=avg_repeat_hypno_by_stage_dict,
                         background_color="black",
                         link_scatter=False,
                         labels_color="white",
