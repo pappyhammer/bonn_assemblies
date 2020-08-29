@@ -20,12 +20,18 @@ def plot_scatter_family(data_dict, colors_dict,
                         with_y_jitter=None,
                         x_labels_rotation=None,
                         h_lines_y_values=None,
+                        with_text=False,
+                        text_size=5,
                         save_formats="pdf",
+                        dpi=200,
                         with_timestamp_in_file_name=True):
     """
     Plot family of scatters (same color and label) with possibly lines that are associated to it.
-    :param data_dict: key is a label, value is a list of 3 list of int, of same size, first one are the x-value,
-    second one is the y-values and third one is the number of elements that allows to get this number (like number
+    :param data_dict: key is a label, value is a list of up to 4 (2 mandatory) list of int, of same size,
+    first one are the x-value,
+    second one is the y-values
+    Third one is a text to write in the scatter
+    Fourth one is the number of elements that allows to get this number (like number
     of sessions)
     :param colors_dict = key is a label, value is a color
     :param label_to_legend: (dict) if not None, key are label of data_dict, value is the label to be displayed as legend
@@ -36,11 +42,12 @@ def plot_scatter_family(data_dict, colors_dict,
     :param y_lim: tuple of int,
     :param link_scatter: draw a line between scatters
     :param save_formats:
+    :param with_text: if True and data available in data_dict, then text is plot in the scatter
     :return:
     """
     fig, ax1 = plt.subplots(nrows=1, ncols=1,
                             gridspec_kw={'height_ratios': [1]},
-                            figsize=(12, 12))
+                            figsize=(12, 12), dpi=dpi)
 
     ax1.set_facecolor(background_color)
 
@@ -81,6 +88,18 @@ def plot_scatter_family(data_dict, colors_dict,
                     label=label_legend,
                     s=scatter_size, zorder=21)
 
+        if with_text and len(data_to_scatters) > 2:
+            # then the third dimension is a text to plot in the scatter
+            for scatter_index in np.arange(len(data_to_scatters[2])):
+                scatter_text = str(data_to_scatters[2][scatter_index])
+                if len(scatter_text) > 3:
+                    font_size = text_size - 2
+                else:
+                    font_size = text_size
+                ax1.text(x=x_pos[scatter_index], y=y_pos[scatter_index],
+                         s=scatter_text, color="black", zorder=50,
+                         ha='center', va="center", fontsize=font_size, fontweight='bold')
+
         if link_scatter:
             ax1.plot(x_pos, y_pos, zorder=30, color=colors_dict[label],
                      linewidth=1)
@@ -107,6 +126,33 @@ def plot_scatter_family(data_dict, colors_dict,
     ax1.yaxis.label.set_color(labels_color)
     if y_log:
         ax1.set_yscale("log")
+
+    """
+    legend_elements = []
+    # [Line2D([0], [0], color='b', lw=4, label='Line')
+    age_index = 0
+    for age in ages_key_order:
+        if color_option == "use_cmap_random":
+            color = plt.get_cmap(cmap_name)(float(age_index + 1) / (len(ages_key_order) + 1))
+        elif color_option == "use_cmap_gradient":
+            values = np.linspace(0, 1, len(ages_key_order))
+            color = plt.get_cmap(cmap_name)(values[age_index])
+        elif color_option == "manual":
+            color = manual_colors[age]
+        else:
+            color = param.colors[age_index % (len(param.colors))]
+        legend_elements.append(Patch(facecolor=color,
+                                     edgecolor='black', label=f'p{age}'))
+        age_index += 1
+    # if use_different_shapes_for_stat:
+    #     for cat in np.arange(1, n_categories + 1):
+    #         if cat in banned_categories:
+    #             continue
+    #         legend_elements.append(Line2D([0], [0], marker=param.markers[cat - 1], color="w", lw=0, label="*" * cat,
+    #                                       markerfacecolor='black', markersize=15))
+
+    # ax1.legend(handles=legend_elements)
+    """
 
     ax1.legend()
 

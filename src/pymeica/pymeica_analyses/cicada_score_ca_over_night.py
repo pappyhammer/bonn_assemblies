@@ -108,6 +108,14 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
                                        short_description=f"Color for stage {stage_name}",
                                        long_description=None, family_widget="stage_color")
 
+        self.add_choices_arg_for_gui(arg_name="text_in_scatter", choices=["No text", "n RU", "ratio RU / units"],
+                                     default_value="n RU",
+                                     short_description="Text to display in cell assembly",
+                                     long_description="Fro each scatter representing a cell assembly, you can display "
+                                                      "information regarding responsive units (RU) in it.",
+                                     multiple_choices=False,
+                                     family_widget="data_params")
+
         self.add_bool_option_for_gui(arg_name="only_ca_with_ri", true_by_default=False,
                                      short_description="Only CA with RI",
                                      long_description="Only consider cell assemblies with responsive unit",
@@ -152,6 +160,14 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
         sleep_stages_selected_by_session = kwargs["sleep_stages_selected"]
 
         side_to_analyse = kwargs["side_to_analyse"]
+
+        text_in_scatter = kwargs["text_in_scatter"]
+
+        with_text = text_in_scatter != "No text"
+
+        n_ru_in_text = text_in_scatter == "n RU"
+
+        ration_ru_in_text = text_in_scatter == "ratio RU / units"
 
         color_by_sleep_stage_dict = dict()
         for stage_name in self.stages_name:
@@ -200,7 +216,10 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
             else:
                 side_to_load = side_to_analyse
             session_data.load_mcad_data(data_path=mcad_data_path, side_to_load=side_to_load,
-                                        sleep_stage_indices_to_load=sleep_stages_selected)
+                                        sleep_stage_indices_to_load=sleep_stages_selected,
+                                        update_progress_bar_fct=self.update_progressbar,
+                                        time_started=self.analysis_start_time,
+                                        total_increment=95 / n_sessions)
             sleep_stages_to_analyse_by_subject[session_identifier] = sleep_stages_selected
             # session_data.descriptive_stats()
             # self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
@@ -210,9 +229,12 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
                                                 color_by_sleep_stage_dict=color_by_sleep_stage_dict,
                                                 sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
                                                 only_ca_with_ri=only_ca_with_ri,
+                                                with_text=with_text,
+                                                n_ru_in_text=n_ru_in_text,
+                                                ration_ru_in_text=ration_ru_in_text,
                                                 min_repeat_in_ca=min_repeat_in_ca,
                                                 results_path=self.get_results_path(),
-                                                save_formats=save_formats)
+                                                save_formats=save_formats, dpi=dpi)
 
         self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)
         print(f"Score cell assemblies over night analysis run in {time() - self.analysis_start_time:.2f} sec")
@@ -220,8 +242,11 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
 
 def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, color_by_sleep_stage_dict,
                                             only_ca_with_ri, min_repeat_in_ca,
+                                            with_text,
+                                            n_ru_in_text,
+                                            ration_ru_in_text,
                                             sleep_stages_to_analyse_by_subject, results_path,
-                                            save_formats):
+                                            save_formats, dpi):
     """
 
     :param subjects_data:
@@ -281,7 +306,7 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
 
                     # init
                     if sleep_stage.sleep_stage not in ca_scores_by_stage_dict:
-                        ca_scores_by_stage_dict[sleep_stage.sleep_stage] = [[], []]
+                        ca_scores_by_stage_dict[sleep_stage.sleep_stage] = [[], [], []]
                         n_assemblies_by_stage_dict[sleep_stage.sleep_stage] = 0
 
                     # instances of CellAssembly
@@ -302,7 +327,13 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                             time_elapsed_in_hours = time_elapsed_in_sec / 3600
                         ca_scores_by_stage_dict[sleep_stage.sleep_stage][0].append(time_elapsed_in_hours)
                         # negative log value
-                        ca_scores_by_stage_dict[sleep_stage.sleep_stage][1].append(-1*np.log(score))
+                        ca_scores_by_stage_dict[sleep_stage.sleep_stage][1].append(-1 * np.log(score))
+                        if ration_ru_in_text:
+                            ratio_ri = cell_assembly.n_responsive_units / cell_assembly.n_units
+                            ratio_ri = f"{ratio_ri:.2f}"
+                            ca_scores_by_stage_dict[sleep_stage.sleep_stage][2].append(ratio_ri)
+                        elif n_ru_in_text:
+                            ca_scores_by_stage_dict[sleep_stage.sleep_stage][2].append(cell_assembly.n_responsive_units)
                         cell_assembly_added = True
 
                     current_time_in_sleep_stage += chunk_duration_in_sec
@@ -328,7 +359,7 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
         times = scatter_values[0]
         scores = np.asarray(scatter_values[1])
         for step_index, bin_edge in enumerate(bin_edges[:-1]):
-            next_bin_edge = bin_edges[step_index+1]
+            next_bin_edge = bin_edges[step_index + 1]
             center_time = (bin_edge + next_bin_edge) / 2
             indices = np.where(np.logical_and(times >= bin_edge, times <= next_bin_edge))[0]
             avg_score_hypno_by_stage_dict[sleep_stage_name][0][0].append(center_time)
@@ -345,12 +376,12 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
             elapsed_time = subject_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage)
             if elapsed_time < 0:
                 continue
-            new_epoch = [[elapsed_time / 3600, (elapsed_time+sleep_stage.duration_sec) / 3600],
+            new_epoch = [[elapsed_time / 3600, (elapsed_time + sleep_stage.duration_sec) / 3600],
                          [y_pos_sleep_stage, y_pos_sleep_stage]]
             avg_score_hypno_by_stage_dict[sleep_stage_name].append(new_epoch)
         y_pos_sleep_stage += y_pos_sep
 
-    h_lines_y_values = [-1*np.log(0.05)]
+    h_lines_y_values = [-1 * np.log(0.05)]
     # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
     for sleep_stage_name, scatter_values in ca_scores_by_stage_dict.items():
         data_dict = {sleep_stage_name: scatter_values}
@@ -380,7 +411,10 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                             with_x_jitter=0.05,
                             with_y_jitter=None,
                             x_labels_rotation=None,
+                            with_text=with_text,
+                            text_size=5,
                             save_formats=save_formats,
+                            dpi=dpi,
                             with_timestamp_in_file_name=True)
 
     label_to_legend_dict = dict()
@@ -411,6 +445,8 @@ def plot_ca_score_over_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                         labels_color="white",
                         with_x_jitter=0.05,
                         with_y_jitter=None,
+                        with_text=with_text,
                         x_labels_rotation=None,
                         save_formats=save_formats,
+                        dpi=dpi,
                         with_timestamp_in_file_name=True)

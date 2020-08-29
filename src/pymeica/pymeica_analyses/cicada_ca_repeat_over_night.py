@@ -102,6 +102,14 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
                                      multiple_choices=False,
                                      family_widget="data_params")
 
+        self.add_choices_arg_for_gui(arg_name="text_in_scatter", choices=["No text", "n RU", "ratio RU / units"],
+                                     default_value="n RU",
+                                     short_description="Text to display in cell assembly",
+                                     long_description="Fro each scatter representing a cell assembly, you can display "
+                                                      "information regarding responsive units (RU) in it.",
+                                     multiple_choices=False,
+                                     family_widget="data_params")
+
         for stage_name in self.stages_name:
             self.add_color_arg_for_gui(arg_name=f"color_by_stage_{stage_name}",
                                        default_value=(1, 1, 1, 1.),
@@ -153,6 +161,14 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
 
         side_to_analyse = kwargs["side_to_analyse"]
 
+        text_in_scatter = kwargs["text_in_scatter"]
+
+        with_text = text_in_scatter != "No text"
+
+        n_ru_in_text = text_in_scatter == "n RU"
+
+        ratio_ru_in_text = text_in_scatter == "ratio RU / units"
+
         color_by_sleep_stage_dict = dict()
         for stage_name in self.stages_name:
             stage_color = kwargs[f"color_by_stage_{stage_name}"]
@@ -200,7 +216,10 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
             else:
                 side_to_load = side_to_analyse
             session_data.load_mcad_data(data_path=mcad_data_path, side_to_load=side_to_load,
-                                        sleep_stage_indices_to_load=sleep_stages_selected)
+                                        sleep_stage_indices_to_load=sleep_stages_selected,
+                                        update_progress_bar_fct=self.update_progressbar,
+                                        time_started=self.analysis_start_time,
+                                        total_increment=95 / n_sessions)
             sleep_stages_to_analyse_by_subject[session_identifier] = sleep_stages_selected
             # session_data.descriptive_stats()
             # self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
@@ -210,9 +229,12 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
                                                  color_by_sleep_stage_dict=color_by_sleep_stage_dict,
                                                  sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
                                                  only_ca_with_ri=only_ca_with_ri,
+                                                 with_text=with_text,
+                                                 n_ru_in_text=n_ru_in_text,
+                                                ratio_ru_in_text=ratio_ru_in_text,
                                                  min_repeat_in_ca=min_repeat_in_ca,
                                                  results_path=self.get_results_path(),
-                                                 save_formats=save_formats)
+                                                 save_formats=save_formats, dpi=dpi)
 
         self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)
         print(f"Score cell assemblies over night analysis run in {time() - self.analysis_start_time:.2f} sec")
@@ -220,8 +242,11 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
 
 def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, color_by_sleep_stage_dict,
                                              only_ca_with_ri, min_repeat_in_ca,
+                                             with_text,
+                                             n_ru_in_text,
+                                             ratio_ru_in_text,
                                              sleep_stages_to_analyse_by_subject, results_path,
-                                             save_formats):
+                                             save_formats, dpi):
     """
 
     :param subjects_data:
@@ -281,7 +306,7 @@ def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, col
 
                     # init
                     if sleep_stage.sleep_stage not in ca_repeat_by_stage_dict:
-                        ca_repeat_by_stage_dict[sleep_stage.sleep_stage] = [[], []]
+                        ca_repeat_by_stage_dict[sleep_stage.sleep_stage] = [[], [], []]
                         n_assemblies_by_stage_dict[sleep_stage.sleep_stage] = 0
 
                     # instances of CellAssembly
@@ -304,6 +329,12 @@ def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, col
                         # n repeat normalizing by the number of minutes in the chunk
                         ca_repeat_by_stage_dict[sleep_stage.sleep_stage][1].append(cell_assembly.n_repeats /
                                                                                    (chunk_duration_in_sec / 60))
+                        if ratio_ru_in_text:
+                            ratio_ri = cell_assembly.n_responsive_units / cell_assembly.n_units
+                            ratio_ri = f"{ratio_ri:.2f}"
+                            ca_repeat_by_stage_dict[sleep_stage.sleep_stage][2].append(ratio_ri)
+                        elif n_ru_in_text:
+                            ca_repeat_by_stage_dict[sleep_stage.sleep_stage][2].append(cell_assembly.n_responsive_units)
                         cell_assembly_added = True
 
                     current_time_in_sleep_stage += chunk_duration_in_sec
@@ -329,7 +360,7 @@ def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, col
         times = scatter_values[0]
         repeats = np.asarray(scatter_values[1])
         for step_index, bin_edge in enumerate(bin_edges[:-1]):
-            next_bin_edge = bin_edges[step_index+1]
+            next_bin_edge = bin_edges[step_index + 1]
             center_time = (bin_edge + next_bin_edge) / 2
             indices = np.where(np.logical_and(times >= bin_edge, times <= next_bin_edge))[0]
             avg_repeat_hypno_by_stage_dict[sleep_stage_name][0][0].append(center_time)
@@ -346,12 +377,11 @@ def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, col
             elapsed_time = subject_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage)
             if elapsed_time < 0:
                 continue
-            new_epoch = [[elapsed_time / 3600, (elapsed_time+sleep_stage.duration_sec) / 3600],
+            new_epoch = [[elapsed_time / 3600, (elapsed_time + sleep_stage.duration_sec) / 3600],
                          [y_pos_sleep_stage, y_pos_sleep_stage]]
             avg_repeat_hypno_by_stage_dict[sleep_stage_name].append(new_epoch)
         y_pos_sleep_stage += y_pos_sep
 
-    h_lines_y_values = [-1*np.log(0.05)]
     # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
     for sleep_stage_name, scatter_values in ca_repeat_by_stage_dict.items():
         data_dict = {sleep_stage_name: scatter_values}
@@ -371,7 +401,7 @@ def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, col
                             path_results=results_path,  # y_lim=[0, 100],
                             x_label="Time (hours)",
                             y_log=False,
-                            h_lines_y_values=h_lines_y_values,
+                            h_lines_y_values=None,
                             scatter_size=150,
                             scatter_alpha=0.8,
                             lines_plot_values=avg_repeat_dict,
@@ -379,9 +409,11 @@ def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, col
                             link_scatter=False,
                             labels_color="white",
                             with_x_jitter=0.05,
+                            with_text=with_text,
                             with_y_jitter=None,
                             x_labels_rotation=None,
                             save_formats=save_formats,
+                            dpi=dpi,
                             with_timestamp_in_file_name=True)
 
     label_to_legend_dict = dict()
@@ -403,7 +435,7 @@ def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, col
                         path_results=results_path,  # y_lim=[0, 100],
                         x_label="Time (hours)",
                         y_log=False,
-                        h_lines_y_values=h_lines_y_values,
+                        h_lines_y_values=None,
                         scatter_size=150,
                         scatter_alpha=0.8,
                         lines_plot_values=avg_repeat_hypno_by_stage_dict,
@@ -411,7 +443,10 @@ def plot_ca_repeat_over_night_by_sleep_stage(subjects_data, side_to_analyse, col
                         link_scatter=False,
                         labels_color="white",
                         with_x_jitter=0.05,
+                        with_text=with_text,
+                        text_size=5,
                         with_y_jitter=None,
                         x_labels_rotation=None,
                         save_formats=save_formats,
+                        dpi=dpi,
                         with_timestamp_in_file_name=True)

@@ -339,6 +339,7 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                         link_scatter=True,
                         labels_color="white",
                         with_x_jitter=0.1,
+                        with_text=False,
                         with_y_jitter=None,
                         x_labels_rotation=None,
                         save_formats=save_formats,

@@ -92,8 +92,11 @@ class CicadaDisplayPatientInfo(CicadaAnalysis):
         for session_index, session_data in enumerate(self._data_to_analyse):
             session_identifier = session_data.identifier
             print(f"-------------- {session_identifier} -------------- ")
-            session_data.load_mcad_data(data_path=mcad_data_path)
+            session_data.load_mcad_data(data_path=mcad_data_path,
+                                        update_progress_bar_fct=self.update_progressbar,
+                                        time_started=self.analysis_start_time,
+                                        total_increment=60 / n_sessions)
             session_data.descriptive_stats()
-            self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
+            # self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
 
         print(f"Display patient info analysis run in {time() - self.analysis_start_time} sec")
