@@ -24,6 +24,7 @@ import matplotlib.cm as cm
 import seaborn as sns
 import matplotlib as mpl
 import matplotlib.gridspec as gridspec
+import collections
 from sortedcontainers import SortedList, SortedDict
 
 from scipy.special import comb
@@ -32,6 +33,7 @@ from pymeica.utils.spike_trains import create_spike_train_neo_format, spike_trai
     get_sce_detection_threshold, detect_sce_with_sliding_window
 
 from pymeica.utils.display.rasters import plot_raster
+from pymeica.utils.misc import get_brain_area_from_cell_label
 
 
 def mcad_main(stage_descr, results_path,
@@ -217,6 +219,7 @@ class CellAssembly:
     Represent a unique cell assembly. Composed of n cells, for each cell indicate when and how many times
     it repeats. It also give the proportion of Responsive Units...
     """
+    SIMPLE_REGION_MAPPING = {"AH": "H", "MH": "H", "PH": "H", "A": "A", "PHC": "PHC", "EC": "EC"}
 
     def __init__(self, sleep_stage, mcad_outcome, cells, cells_label,
                  is_responsive_units_dict, is_invariant_units_dict,
@@ -235,10 +238,39 @@ class CellAssembly:
         self.mcad_outcome = mcad_outcome
         self.cells = cells
         self.cells_label = cells_label
+        # means AH and MH are considered as Hippocampus
+        self.use_simple_region = True
+        if self.use_simple_region:
+            self.brain_regions = [self.SIMPLE_REGION_MAPPING[get_brain_area_from_cell_label(cell_label)]
+                                  for cell_label in self.cells_label]
+        else:
+            self.brain_regions = [get_brain_area_from_cell_label(cell_label) for cell_label in self.cells_label]
         self.is_responsive_units_dict = is_responsive_units_dict
         self.is_invariant_units_dict = is_invariant_units_dict
         self.cells_synchronous_event = cells_synchronous_event
         self._probability_score_pre_computed = None
+
+    def get_brain_region_count(self):
+        """
+
+        :return: A dict with key the brain area, and value a count with the number of units from this area
+        """
+        return dict(collections.Counter(self.brain_regions))
+
+    @property
+    def main_brain_region(self):
+        """
+        Return the main brain region, and it's proportion over all units
+        :return: (str) brain_region and (float) proportion of all unit in %
+        """
+        brain_region_count = self.get_brain_region_count()
+        max_count = 0
+        max_brain_region = None
+        for brain_region, count_value in brain_region_count.items():
+            if count_value > max_count:
+                max_count = count_value
+                max_brain_region = brain_region
+        return max_brain_region, (max_count/self.n_units) * 100
 
     @property
     def probability_score(self):
@@ -270,6 +302,10 @@ class CellAssembly:
     @property
     def n_repeats(self):
         return len(self.cells_synchronous_event[self.cells[0]])
+
+    @property
+    def n_repeats_by_min(self):
+        return self.n_repeats / (self.mcad_outcome.duration_in_sec / 60)
 
     #TODO: Compute the probability of this cell assembly taking in consideration the RU & IU
 
@@ -328,6 +364,10 @@ class MCADOutcome:
 
         self.bins_tuple = (self.first_bin_index, self.last_bin_index)
 
+        n_bins = self.last_bin_index - self.first_bin_index + 1
+
+        self.duration_in_sec = (n_bins * self.spike_trains_bin_size) / 1000
+
         if self.n_cell_assemblies > 0:
             # we make sure the cell assemblies are not empty, it happens that actually no syncrhonous event are associated
             # to cell assemblies
@@ -369,6 +409,7 @@ class MCADOutcome:
                                              is_invariant_units_dict=is_invariant_units_dict,
                                              cells_synchronous_event=cells_synchronous_event_in_cell_assembly)
                 self.cell_assemblies.append(cell_assembly)
+
     # TODO: Make a function that allows to know how many RU / IU in each cell assembly
     #  then how many are stastically
 

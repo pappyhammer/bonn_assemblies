@@ -1,4 +1,6 @@
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 import numpy as np
 from datetime import datetime
 
@@ -7,6 +9,7 @@ def plot_scatter_family(data_dict, colors_dict,
                         filename,
                         y_label,
                         label_to_legend=None,
+                        marker_to_legend=None,
                         path_results=None, y_lim=None,
                         x_label=None,
                         y_log=False,
@@ -21,6 +24,7 @@ def plot_scatter_family(data_dict, colors_dict,
                         x_labels_rotation=None,
                         h_lines_y_values=None,
                         with_text=False,
+                        default_marker='o',
                         text_size=5,
                         save_formats="pdf",
                         dpi=200,
@@ -31,10 +35,12 @@ def plot_scatter_family(data_dict, colors_dict,
     first one are the x-value,
     second one is the y-values
     Third one is a text to write in the scatter
-    Fourth one is the number of elements that allows to get this number (like number
+    Fourth one is the marker to display, could be absent, default_marker will be used
+    Fifth one is the number of elements that allows to get this number (like number
     of sessions)
     :param colors_dict = key is a label, value is a color
     :param label_to_legend: (dict) if not None, key are label of data_dict, value is the label to be displayed as legend
+    :param marker_to_legend: (dict) if not None, key are marker of data_dict, value is the label to be displayed as legend
     :param filename:
     :param lines_plot_values: (dict) same keys as data_dict, value is a list of list of 2 list of int or float,
     representing x & y value of plot to trace
@@ -80,13 +86,25 @@ def plot_scatter_family(data_dict, colors_dict,
             colors_scatters.extend(colors_dict[label])
 
         label_legend = label_to_legend[label] if label_to_legend is not None else label
-        ax1.scatter(x_pos, y_pos,
-                    color=colors_dict[label],
-                    alpha=scatter_alpha,
-                    marker="o",
-                    edgecolors=labels_color,
-                    label=label_legend,
-                    s=scatter_size, zorder=21)
+        if len(data_dict) > 3:
+            markers = data_to_scatters[3]
+            for index in range(len(x_pos)):
+                # if too slow, see to regroup by scatter value
+                ax1.scatter(x_pos[index], y_pos[index],
+                            color=colors_dict[label],
+                            alpha=scatter_alpha,
+                            marker=markers[index],
+                            edgecolors=labels_color,
+                            # label=label_legend,
+                            s=scatter_size, zorder=21)
+        else:
+            ax1.scatter(x_pos, y_pos,
+                        color=colors_dict[label],
+                        alpha=scatter_alpha,
+                        marker=default_marker,
+                        edgecolors=labels_color,
+                        # label=label_legend,
+                        s=scatter_size, zorder=21)
 
         if with_text and len(data_to_scatters) > 2:
             # then the third dimension is a text to plot in the scatter
@@ -127,34 +145,18 @@ def plot_scatter_family(data_dict, colors_dict,
     if y_log:
         ax1.set_yscale("log")
 
-    """
     legend_elements = []
-    # [Line2D([0], [0], color='b', lw=4, label='Line')
-    age_index = 0
-    for age in ages_key_order:
-        if color_option == "use_cmap_random":
-            color = plt.get_cmap(cmap_name)(float(age_index + 1) / (len(ages_key_order) + 1))
-        elif color_option == "use_cmap_gradient":
-            values = np.linspace(0, 1, len(ages_key_order))
-            color = plt.get_cmap(cmap_name)(values[age_index])
-        elif color_option == "manual":
-            color = manual_colors[age]
-        else:
-            color = param.colors[age_index % (len(param.colors))]
+    for label, color in colors_dict.items():
+        if label not in label_to_legend:
+            continue
+        label_legend = label_to_legend[label] if label_to_legend is not None else label
         legend_elements.append(Patch(facecolor=color,
-                                     edgecolor='black', label=f'p{age}'))
-        age_index += 1
-    # if use_different_shapes_for_stat:
-    #     for cat in np.arange(1, n_categories + 1):
-    #         if cat in banned_categories:
-    #             continue
-    #         legend_elements.append(Line2D([0], [0], marker=param.markers[cat - 1], color="w", lw=0, label="*" * cat,
-    #                                       markerfacecolor='black', markersize=15))
-
-    # ax1.legend(handles=legend_elements)
-    """
-
-    ax1.legend()
+                                     edgecolor='black', label=label_legend))
+    if (marker_to_legend is not None) and (len(marker_to_legend) > 0):
+        for marker, marker_legend in marker_to_legend.items():
+            legend_elements.append(Line2D([0], [0], marker=marker, color="w", lw=0, label=marker_legend,
+                                   markerfacecolor='black', markersize=12))
+    ax1.legend(handles=legend_elements)
 
     ax1.yaxis.set_tick_params(labelsize=20)
     ax1.xaxis.set_tick_params(labelsize=15)
@@ -190,3 +192,258 @@ def plot_scatter_family(data_dict, colors_dict,
                     facecolor=fig.get_facecolor())
 
     plt.close()
+
+
+def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, param_name,
+                                            fct_to_get_param,
+                                            y_axis_label,
+                                            color_by_sleep_stage_dict,
+                                            only_ca_with_ri, min_repeat_in_ca, brain_region_to_marker,
+                                            marker_to_brain_region,
+                                            with_text,
+                                            n_ru_in_text,
+                                            ratio_ru_in_text,
+                                            sleep_stages_to_analyse_by_subject, results_path,
+                                            save_formats, dpi, h_lines_y_values=None):
+    """
+    Allows to plot a parameter linked to cell assemblies in order to plot its evolution (in y) over the course
+    of the night (in x)
+    :param subjects_data:
+    :param side_to_analyse: (str)value 'L', 'R', or 'L&R'
+    :param param_name: (str) name description used for naming file,
+    :param fct_to_get_param: (function) take in argument an instance of CellAssembly and return a value, that correspond
+    to the CA param which is evolution will be ploted
+    :param y_axis_label
+    :param sleep_stages_to_analyse_by_subject:
+    :param results_path:
+    :param save_formats:
+    :param h_lines_y_values: list of float, if not None, a horizontal line will be plot for each value (y)
+    :return:
+    """
+    # print("plot_ca_proportion_night_by_sleep_stage")
+
+    subject_descr = ""
+    # key is sleep_stage_name, value is a list of 2 list, first list contains the time elapsed since falling asleep,
+    # second is the param of the assembly (up to 4 list are the same length)
+    ca_param_by_stage_dict = dict()
+    time_by_stage_with_ca_dict = dict()
+    time_total_by_stage_dict = dict()
+    n_assemblies_by_stage_dict = dict()
+    # key is brain region, value number of CA
+    count_ca_by_brain_region = dict()
+    # key is brain region, value list of values
+    all_values_by_brain_region = dict()
+
+    for subject_data in subjects_data:
+        subject_id = subject_data.identifier
+        subject_descr = subject_descr + subject_id + "_"
+        if side_to_analyse == "L&R":
+            sides = ['L', 'R']
+        else:
+            sides = [side_to_analyse]
+        for side in sides:
+            # print(f'plot_ca_proportion_night_by_sleep_stage side {side}')
+            for sleep_stage_index in np.sort(sleep_stages_to_analyse_by_subject[subject_id]):
+                sleep_stage = subject_data.sleep_stages[sleep_stage_index]
+                if sleep_stage.sleep_stage not in time_total_by_stage_dict:
+                    time_total_by_stage_dict[sleep_stage.sleep_stage] = 0
+                    time_by_stage_with_ca_dict[sleep_stage.sleep_stage] = 0
+                time_total_by_stage_dict[sleep_stage.sleep_stage] += sleep_stage.duration_sec
+                elapsed_time = subject_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage)
+                if elapsed_time < 0:
+                    continue
+                # sleep_stage.sleep_stage is a string representing the sleep stage like 'W' or '3'
+
+                if len(sleep_stage.mcad_outcomes) == 0:
+                    # then there is no cell assembly
+                    continue
+
+                time_cover_by_bin_tuples = 0
+                # to count the chunks
+                current_time_in_sleep_stage = 0
+                for bins_tuple, mcad_outcome in sleep_stage.mcad_outcomes.items():
+                    n_bins = bins_tuple[1] - bins_tuple[0] + 1
+                    chunk_duration_in_sec = (n_bins * mcad_outcome.spike_trains_bin_size) / 1000
+
+                    if mcad_outcome.side != side:
+                        # only keeping the outcome from the correct side
+                        current_time_in_sleep_stage += chunk_duration_in_sec
+                        continue
+                    if mcad_outcome.n_cell_assemblies == 0:
+                        current_time_in_sleep_stage += chunk_duration_in_sec
+                        continue
+
+                    # init
+                    if sleep_stage.sleep_stage not in ca_param_by_stage_dict:
+                        ca_param_by_stage_dict[sleep_stage.sleep_stage] = [[], [], [], []]
+                        n_assemblies_by_stage_dict[sleep_stage.sleep_stage] = 0
+
+                    # instances of CellAssembly
+                    cell_assembly_added = False
+                    for cell_assembly in mcad_outcome.cell_assemblies:
+                        if only_ca_with_ri and (cell_assembly.n_responsive_units == 0):
+                            continue
+                        if cell_assembly.n_repeats < min_repeat_in_ca:
+                            continue
+
+                        param_value = fct_to_get_param(cell_assembly)
+
+                        n_assemblies_by_stage_dict[sleep_stage.sleep_stage] += 1
+
+                        if not cell_assembly_added:
+                            time_by_stage_with_ca_dict[sleep_stage.sleep_stage] += chunk_duration_in_sec
+                            time_elapsed_in_sec = elapsed_time + current_time_in_sleep_stage
+                            time_elapsed_in_hours = time_elapsed_in_sec / 3600
+                        ca_param_by_stage_dict[sleep_stage.sleep_stage][0].append(time_elapsed_in_hours)
+                        # negative log value
+                        ca_param_by_stage_dict[sleep_stage.sleep_stage][1].append(param_value)
+                        if ratio_ru_in_text:
+                            ratio_ri = cell_assembly.n_responsive_units / cell_assembly.n_units
+                            ratio_ri = f"{ratio_ri:.2f}"
+                            ca_param_by_stage_dict[sleep_stage.sleep_stage][2].append(ratio_ri)
+                        elif n_ru_in_text:
+                            ca_param_by_stage_dict[sleep_stage.sleep_stage][2].append(cell_assembly.n_responsive_units)
+
+                        # adding a marker representing the main brain region is this assembly
+                        brain_region, units_proportion = cell_assembly.main_brain_region
+                        marker = brain_region_to_marker[brain_region]
+                        ca_param_by_stage_dict[sleep_stage.sleep_stage][3].append(marker)
+
+                        # key is brain region, value number of CA
+                        if brain_region not in count_ca_by_brain_region:
+                            # key is brain region, value list of values
+                            count_ca_by_brain_region[brain_region] = 0
+                            all_values_by_brain_region[brain_region] = []
+                        count_ca_by_brain_region[brain_region] += 1
+                        all_values_by_brain_region[brain_region].append(param_value)
+
+                        cell_assembly_added = True
+
+                    current_time_in_sleep_stage += chunk_duration_in_sec
+
+    # moving winodw to average over time the param
+    # key is the sleep stage name, value is a list of list of list of 2 float representing (x, y) for line plots
+    avg_param_hypno_by_stage_dict = dict()
+    # in hours
+    window_length = 0.5
+    step_length = 0.25
+    min_time = 10000
+    max_time = 0
+    for sleep_stage_name, scatter_values in ca_param_by_stage_dict.items():
+        times = scatter_values[0]
+        min_time = min(min_time, np.min(times))
+        max_time = max(max_time, np.max(times))
+    bin_edges = np.arange(min_time, max_time + step_length, step_length)
+
+    y_pos_sep = -0.25
+    y_pos_sleep_stage = y_pos_sep
+    for sleep_stage_name, scatter_values in ca_param_by_stage_dict.items():
+        avg_param_hypno_by_stage_dict[sleep_stage_name] = [[[], []]]
+        times = scatter_values[0]
+        param_values = np.asarray(scatter_values[1])
+        for step_index, bin_edge in enumerate(bin_edges[:-1]):
+            next_bin_edge = bin_edges[step_index + 1]
+            center_time = (bin_edge + next_bin_edge) / 2
+            indices = np.where(np.logical_and(times >= bin_edge, times <= next_bin_edge))[0]
+            avg_param_hypno_by_stage_dict[sleep_stage_name][0][0].append(center_time)
+            if len(indices) == 0:
+                avg_param_hypno_by_stage_dict[sleep_stage_name][0][1].append(0)
+            else:
+                avg_param_value = np.mean(param_values[indices])
+                avg_param_hypno_by_stage_dict[sleep_stage_name][0][1].append(avg_param_value)
+
+        for sleep_stage_index in np.sort(sleep_stages_to_analyse_by_subject[subject_id]):
+            sleep_stage = subject_data.sleep_stages[sleep_stage_index]
+            if sleep_stage.sleep_stage != sleep_stage_name:
+                continue
+            elapsed_time = subject_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage)
+            if elapsed_time < 0:
+                continue
+            new_epoch = [[elapsed_time / 3600, (elapsed_time + sleep_stage.duration_sec) / 3600],
+                         [y_pos_sleep_stage, y_pos_sleep_stage]]
+            avg_param_hypno_by_stage_dict[sleep_stage_name].append(new_epoch)
+        y_pos_sleep_stage += y_pos_sep
+
+    # legend by brain region
+    brain_region_legend_dict = dict()
+    brain_region_legend_dict.update(marker_to_brain_region)
+    for brain_region in count_ca_by_brain_region.keys():
+        marker = brain_region_to_marker[brain_region]
+        legend = brain_region_legend_dict[marker]
+        count_ca = count_ca_by_brain_region[brain_region]
+        avg_value = np.mean(all_values_by_brain_region[brain_region])
+        new_legend = legend + f" (x{count_ca} CA, avg={avg_value:.1f})"
+        brain_region_legend_dict[marker] = new_legend
+
+    # h_lines_y_values = [-1 * np.log(0.05)]
+    # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
+    for sleep_stage_name, scatter_values in ca_param_by_stage_dict.items():
+        data_dict = {sleep_stage_name: scatter_values}
+        ca_time_sec = time_by_stage_with_ca_dict[sleep_stage_name]
+        total_time_sec = time_total_by_stage_dict[sleep_stage_name]
+        ratio_ca_time_total_time = (ca_time_sec / total_time_sec) * 100
+        legend = f"(x{n_assemblies_by_stage_dict[sleep_stage_name]} CA) " \
+                 f"{(ca_time_sec / 60):.1f} min over {(total_time_sec / 60):.1f} " \
+                 f"min ({ratio_ca_time_total_time:.1f} %)"
+        label_to_legend_dict = {sleep_stage_name: f"{sleep_stage_name}: {legend}"}
+        avg_param_dict = {sleep_stage_name: avg_param_hypno_by_stage_dict[sleep_stage_name]}
+        plot_scatter_family(data_dict=data_dict,
+                            label_to_legend=label_to_legend_dict,
+                            colors_dict=color_by_sleep_stage_dict,
+                            filename=f"{subject_descr}{param_name}_ca_over_night_stage_"
+                                     f"{sleep_stage_name}_{side_to_analyse}",
+                            y_label=y_axis_label,
+                            path_results=results_path,  # y_lim=[0, 100],
+                            x_label="Time (hours)",
+                            y_log=False,
+                            h_lines_y_values=h_lines_y_values,
+                            scatter_size=150,
+                            scatter_alpha=0.8,
+                            lines_plot_values=avg_param_dict,
+                            background_color="black",
+                            link_scatter=False,
+                            labels_color="white",
+                            with_x_jitter=0.05,
+                            with_y_jitter=None,
+                            x_labels_rotation=None,
+                            marker_to_legend=brain_region_legend_dict,
+                            with_text=with_text,
+                            text_size=5,
+                            save_formats=save_formats,
+                            dpi=dpi,
+                            with_timestamp_in_file_name=True)
+
+    label_to_legend_dict = dict()
+    for sleep_stage_name in ca_param_by_stage_dict.keys():
+        ca_time_sec = time_by_stage_with_ca_dict[sleep_stage_name]
+        total_time_sec = time_total_by_stage_dict[sleep_stage_name]
+        ratio_ca_time_total_time = (ca_time_sec / total_time_sec) * 100
+        legend = f"(x{n_assemblies_by_stage_dict[sleep_stage_name]} CA) " \
+                 f"{(ca_time_sec / 60):.1f} min over {(total_time_sec / 60):.1f} " \
+                 f"min ({ratio_ca_time_total_time:.1f} %)"
+        label_to_legend_dict[sleep_stage_name] = f"{sleep_stage_name}: {legend}"
+
+    # TODO: See to add option to have a different shape for a cell assembly depending of if it contains RU
+    plot_scatter_family(data_dict=ca_param_by_stage_dict,
+                        label_to_legend=label_to_legend_dict,
+                        colors_dict=color_by_sleep_stage_dict,
+                        filename=f"{subject_descr}{param_name}_ca_over_night_{side_to_analyse}",
+                        y_label=y_axis_label,
+                        path_results=results_path,  # y_lim=[0, 100],
+                        x_label="Time (hours)",
+                        y_log=False,
+                        h_lines_y_values=h_lines_y_values,
+                        scatter_size=150,
+                        scatter_alpha=0.8,
+                        lines_plot_values=avg_param_hypno_by_stage_dict,
+                        background_color="black",
+                        link_scatter=False,
+                        marker_to_legend=brain_region_legend_dict,
+                        labels_color="white",
+                        with_x_jitter=0.05,
+                        with_y_jitter=None,
+                        with_text=with_text,
+                        x_labels_rotation=None,
+                        save_formats=save_formats,
+                        dpi=dpi,
+                        with_timestamp_in_file_name=True)

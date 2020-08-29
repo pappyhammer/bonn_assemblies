@@ -53,6 +53,7 @@ def get_continous_time_periods(binary_array):
             return result
     return []
 
+
 def get_unit_label(cluster_label, cluster_index, channel_index, region_label):
     """
     Return the string representing an unit
@@ -63,3 +64,15 @@ def get_unit_label(cluster_label, cluster_index, channel_index, region_label):
     :return:
     """
     return f"{cluster_label} {cluster_index} {channel_index} {region_label}"
+
+
+def get_brain_area_from_cell_label(cell_label):
+    """
+    Get the brain area string from the label of a cell
+    :param cell_label: (str) such as 'MU 7 40 RA1' or 'SU 1 67 RMH4'
+    :return: None if the format is not valid, a str otherwise
+    """
+    split_values = cell_label.split()
+    if len(split_values) != 4:
+        return None
+    return split_values[-1][1:-1]

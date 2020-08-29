@@ -534,7 +534,22 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         # value is a list of dict representing the content of the yaml file
         mcad_by_sleep_stage = dict()
         for file_index, mcad_file in enumerate(mcad_files):
-            # print(f"in load_mcad_data: {os.path.basename(mcad_file)}")
+            mcad_file_basename = os.path.basename(mcad_file)
+            # to avoid loading the file, we filter based on the file_name, see to change if the file_names should
+            # be changed, so far contain subject_id, sleep_index, side, bin of the chunk, stage_name
+            if self.identifier not in mcad_file_basename:
+                continue
+            if (side_to_load is not None) and (side_to_load not in mcad_file_basename):
+                continue
+            if sleep_stage_indices_to_load is not None:
+                split_file_name = mcad_file_basename.split()
+                if split_file_name[4] == "index":
+                    stage_index_from_file = int(mcad_file_basename.split()[5])
+                else:
+                    stage_index_from_file = int(mcad_file_basename.split()[3])
+                if stage_index_from_file not in sleep_stage_indices_to_load:
+                    continue
+
             with open(mcad_file, 'r') as stream:
                 mcad_results_dict = yaml.load(stream, Loader=yaml.Loader)
                 # first we check if it contains some of the field typical of mcad file

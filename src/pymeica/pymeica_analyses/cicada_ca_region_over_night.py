@@ -7,14 +7,14 @@ from pymeica.utils.display.pymeica_plots import plot_ca_param_over_night_by_slee
 from sortedcontainers import SortedDict
 
 
-class CicadaCaRepeatOverNight(CicadaAnalysis):
+class CicadaCaRegionOverNight(CicadaAnalysis):
     def __init__(self, config_handler=None):
         """
         """
-        long_description = '<p align="center"><b>Cell assembly repeats over night</b></p><br>'
-        CicadaAnalysis.__init__(self, name="Cell assembly repeats",
+        long_description = '<p align="center"><b>Cell assembly brain region ratio over night</b></p><br>'
+        CicadaAnalysis.__init__(self, name="Cell assembly brain region",
                                 family_id="Over night evolution",
-                                short_description="Display cell assembly repeats over night",
+                                short_description="Display cell assembly brain region ratio over night",
                                 long_description=long_description,
                                 config_handler=config_handler,
                                 accepted_data_formats=["PyMEICA"])
@@ -34,7 +34,7 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
         Returns:
 
         """
-        analysis_copy = CicadaCaRepeatOverNight(config_handler=self.config_handler)
+        analysis_copy = CicadaCaRegionOverNight(config_handler=self.config_handler)
         self.transfer_attributes_to_tabula_rasa_copy(analysis_copy=analysis_copy)
 
         return analysis_copy
@@ -128,7 +128,8 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
 
         self.add_int_values_arg_for_gui(arg_name="min_repeat_in_ca", min_value=1, max_value=10,
                                         short_description="Min repeat in cell assembly",
-                                        long_description="Only cell assemblies with this minimum repeat will be included",
+                                        long_description="Only cell assemblies "
+                                                         "with this minimum repeat will be included",
                                         default_value=3, family_widget="data_params")
 
         self.add_image_format_package_for_gui()
@@ -232,9 +233,9 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
         plot_ca_param_over_night_by_sleep_stage(subjects_data=self._data_to_analyse,
                                                 side_to_analyse=side_to_analyse,
 
-                                                param_name="repeat",
-                                                fct_to_get_param=lambda ca: ca.n_repeats_by_min,
-                                                y_axis_label=f"N repeats / min",
+                                                param_name="brain_region_ratio",
+                                                fct_to_get_param=main_brain_region_ratio,
+                                                y_axis_label=f"Brain region ratio (%)",
 
                                                 color_by_sleep_stage_dict=color_by_sleep_stage_dict,
                                                 sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
@@ -251,3 +252,13 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
 
         self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)
         print(f"Score cell assemblies over night analysis run in {time() - self.analysis_start_time:.2f} sec")
+
+
+def main_brain_region_ratio(cell_assembly):
+    """
+
+    :param cell_assembly:
+    :return:
+    """
+    max_brain_region, brain_region_ratio = cell_assembly.main_brain_region
+    return brain_region_ratio
