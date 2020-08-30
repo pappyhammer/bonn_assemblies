@@ -17,6 +17,7 @@ def plot_scatter_family(data_dict, colors_dict,
                         scatter_alpha=1,
                         background_color="black",
                         lines_plot_values=None,
+                        plots_linewidth=2,
                         link_scatter=False,
                         labels_color="white",
                         with_x_jitter=0.2,
@@ -120,14 +121,14 @@ def plot_scatter_family(data_dict, colors_dict,
 
         if link_scatter:
             ax1.plot(x_pos, y_pos, zorder=30, color=colors_dict[label],
-                     linewidth=1)
+                     linewidth=plots_linewidth)
 
         if lines_plot_values is not None:
             if label in lines_plot_values:
                 for lines_coordinates in lines_plot_values[label]:
                     x_pos, y_pos = lines_coordinates
                     ax1.plot(x_pos, y_pos, zorder=35, color=colors_dict[label],
-                             linewidth=2)
+                             linewidth=plots_linewidth)
 
     if h_lines_y_values is not None:
         for y_value in h_lines_y_values:
@@ -155,7 +156,7 @@ def plot_scatter_family(data_dict, colors_dict,
     if (marker_to_legend is not None) and (len(marker_to_legend) > 0):
         for marker, marker_legend in marker_to_legend.items():
             legend_elements.append(Line2D([0], [0], marker=marker, color="w", lw=0, label=marker_legend,
-                                   markerfacecolor='black', markersize=12))
+                                          markerfacecolor='black', markersize=12))
     ax1.legend(handles=legend_elements)
 
     ax1.yaxis.set_tick_params(labelsize=20)
@@ -204,7 +205,10 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                                             n_ru_in_text,
                                             ratio_ru_in_text,
                                             sleep_stages_to_analyse_by_subject, results_path,
-                                            save_formats, dpi, h_lines_y_values=None):
+                                            save_formats, dpi,
+                                            hyponogram_y_step=0.25,
+                                            plots_linewidth=2,
+                                            h_lines_y_values=None):
     """
     Allows to plot a parameter linked to cell assemblies in order to plot its evolution (in y) over the course
     of the night (in x)
@@ -218,21 +222,27 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
     :param results_path:
     :param save_formats:
     :param h_lines_y_values: list of float, if not None, a horizontal line will be plot for each value (y)
+    :param hyponogram_y_step: (float) how much space to let between 2 lines of the hyponogram
     :return:
     """
     # print("plot_ca_proportion_night_by_sleep_stage")
 
+    avg_fct = np.mean
     subject_descr = ""
     # key is sleep_stage_name, value is a list of 2 list, first list contains the time elapsed since falling asleep,
     # second is the param of the assembly (up to 4 list are the same length)
     ca_param_by_stage_dict = dict()
     time_by_stage_with_ca_dict = dict()
     time_total_by_stage_dict = dict()
+    # key is sleep_stage name, value number of CA
     n_assemblies_by_stage_dict = dict()
+    # key is sleep_stage name, value list of values
+    all_values_by_sleep_stage = dict()
     # key is brain region, value number of CA
     count_ca_by_brain_region = dict()
     # key is brain region, value list of values
     all_values_by_brain_region = dict()
+
 
     for subject_data in subjects_data:
         subject_id = subject_data.identifier
@@ -277,6 +287,7 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                     if sleep_stage.sleep_stage not in ca_param_by_stage_dict:
                         ca_param_by_stage_dict[sleep_stage.sleep_stage] = [[], [], [], []]
                         n_assemblies_by_stage_dict[sleep_stage.sleep_stage] = 0
+                        all_values_by_sleep_stage[sleep_stage.sleep_stage] = []
 
                     # instances of CellAssembly
                     cell_assembly_added = False
@@ -316,6 +327,7 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                             all_values_by_brain_region[brain_region] = []
                         count_ca_by_brain_region[brain_region] += 1
                         all_values_by_brain_region[brain_region].append(param_value)
+                        all_values_by_sleep_stage[sleep_stage.sleep_stage].append(param_value)
 
                         cell_assembly_added = True
 
@@ -335,7 +347,7 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
         max_time = max(max_time, np.max(times))
     bin_edges = np.arange(min_time, max_time + step_length, step_length)
 
-    y_pos_sep = -0.25
+    y_pos_sep = -1 * hyponogram_y_step
     y_pos_sleep_stage = y_pos_sep
     for sleep_stage_name, scatter_values in ca_param_by_stage_dict.items():
         avg_param_hypno_by_stage_dict[sleep_stage_name] = [[[], []]]
@@ -371,7 +383,7 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
         marker = brain_region_to_marker[brain_region]
         legend = brain_region_legend_dict[marker]
         count_ca = count_ca_by_brain_region[brain_region]
-        avg_value = np.mean(all_values_by_brain_region[brain_region])
+        avg_value = avg_fct(all_values_by_brain_region[brain_region])
         new_legend = legend + f" (x{count_ca} CA, avg={avg_value:.1f})"
         brain_region_legend_dict[marker] = new_legend
 
@@ -382,9 +394,9 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
         ca_time_sec = time_by_stage_with_ca_dict[sleep_stage_name]
         total_time_sec = time_total_by_stage_dict[sleep_stage_name]
         ratio_ca_time_total_time = (ca_time_sec / total_time_sec) * 100
-        legend = f"(x{n_assemblies_by_stage_dict[sleep_stage_name]} CA) " \
-                 f"{(ca_time_sec / 60):.1f} min over {(total_time_sec / 60):.1f} " \
-                 f"min ({ratio_ca_time_total_time:.1f} %)"
+        avg_value_ss = avg_fct(all_values_by_sleep_stage[sleep_stage_name])
+        legend = f"(x{n_assemblies_by_stage_dict[sleep_stage_name]} CA, avg={avg_value_ss:.1f}) " \
+                 f"{ratio_ca_time_total_time:.1f}% of {(total_time_sec / 60):.1f} min"
         label_to_legend_dict = {sleep_stage_name: f"{sleep_stage_name}: {legend}"}
         avg_param_dict = {sleep_stage_name: avg_param_hypno_by_stage_dict[sleep_stage_name]}
         plot_scatter_family(data_dict=data_dict,
@@ -399,6 +411,7 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                             h_lines_y_values=h_lines_y_values,
                             scatter_size=150,
                             scatter_alpha=0.8,
+                            plots_linewidth=plots_linewidth,
                             lines_plot_values=avg_param_dict,
                             background_color="black",
                             link_scatter=False,
@@ -418,9 +431,10 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
         ca_time_sec = time_by_stage_with_ca_dict[sleep_stage_name]
         total_time_sec = time_total_by_stage_dict[sleep_stage_name]
         ratio_ca_time_total_time = (ca_time_sec / total_time_sec) * 100
-        legend = f"(x{n_assemblies_by_stage_dict[sleep_stage_name]} CA) " \
-                 f"{(ca_time_sec / 60):.1f} min over {(total_time_sec / 60):.1f} " \
-                 f"min ({ratio_ca_time_total_time:.1f} %)"
+        avg_value_ss = avg_fct(all_values_by_sleep_stage[sleep_stage_name])
+        # time in CA from this stage in min: (ca_time_sec / 60)
+        legend = f"(x{n_assemblies_by_stage_dict[sleep_stage_name]} CA, avg={avg_value_ss:.1f}) " \
+                 f"{ratio_ca_time_total_time:.1f}% of {(total_time_sec / 60):.1f} min"
         label_to_legend_dict[sleep_stage_name] = f"{sleep_stage_name}: {legend}"
 
     # TODO: See to add option to have a different shape for a cell assembly depending of if it contains RU
@@ -435,6 +449,7 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                         h_lines_y_values=h_lines_y_values,
                         scatter_size=150,
                         scatter_alpha=0.8,
+                        plots_linewidth=plots_linewidth,
                         lines_plot_values=avg_param_hypno_by_stage_dict,
                         background_color="black",
                         link_scatter=False,

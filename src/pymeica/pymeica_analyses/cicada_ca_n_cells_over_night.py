@@ -7,14 +7,14 @@ from pymeica.utils.display.pymeica_plots import plot_ca_param_over_night_by_slee
 from sortedcontainers import SortedDict
 
 
-class CicadaCaRegionOverNight(CicadaAnalysis):
+class CicadaCaNCellsOverNight(CicadaAnalysis):
     def __init__(self, config_handler=None):
         """
         """
-        long_description = '<p align="center"><b>Cell assembly brain region ratio over night</b></p><br>'
-        CicadaAnalysis.__init__(self, name="Cell assembly brain region",
+        long_description = '<p align="center"><b>Cell assembly n cells over night</b></p><br>'
+        CicadaAnalysis.__init__(self, name="Cell assembly  n cells",
                                 family_id="Over night evolution",
-                                short_description="Display cell assembly brain region ratio over night",
+                                short_description="Display cell assembly number of cells over night",
                                 long_description=long_description,
                                 config_handler=config_handler,
                                 accepted_data_formats=["PyMEICA"])
@@ -34,7 +34,7 @@ class CicadaCaRegionOverNight(CicadaAnalysis):
         Returns:
 
         """
-        analysis_copy = CicadaCaRegionOverNight(config_handler=self.config_handler)
+        analysis_copy = CicadaCaNCellsOverNight(config_handler=self.config_handler)
         self.transfer_attributes_to_tabula_rasa_copy(analysis_copy=analysis_copy)
 
         return analysis_copy
@@ -233,11 +233,11 @@ class CicadaCaRegionOverNight(CicadaAnalysis):
         plot_ca_param_over_night_by_sleep_stage(subjects_data=self._data_to_analyse,
                                                 side_to_analyse=side_to_analyse,
 
-                                                param_name="brain_region_ratio",
-                                                fct_to_get_param=main_brain_region_ratio,
-                                                y_axis_label=f"Brain region ratio (%)",
+                                                param_name="n_cells",
+                                                fct_to_get_param=lambda ca: ca.n_units,
+                                                y_axis_label=f"Cells (#)",
 
-                                                hyponogram_y_step=2,
+                                                hyponogram_y_step=1,
                                                 color_by_sleep_stage_dict=color_by_sleep_stage_dict,
                                                 sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
                                                 only_ca_with_ri=only_ca_with_ri,
@@ -253,13 +253,3 @@ class CicadaCaRegionOverNight(CicadaAnalysis):
 
         self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)
         print(f"Score cell assemblies over night analysis run in {time() - self.analysis_start_time:.2f} sec")
-
-
-def main_brain_region_ratio(cell_assembly):
-    """
-
-    :param cell_assembly:
-    :return:
-    """
-    max_brain_region, brain_region_ratio = cell_assembly.main_brain_region
-    return brain_region_ratio
