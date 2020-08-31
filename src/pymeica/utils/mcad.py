@@ -29,8 +29,8 @@ from sortedcontainers import SortedList, SortedDict
 
 from scipy.special import comb
 
-from pymeica.utils.spike_trains import create_spike_train_neo_format, spike_trains_threshold_by_firing_rate, \
-    get_sce_detection_threshold, detect_sce_with_sliding_window
+from pymeica.utils.spike_trains import get_sce_detection_threshold, detect_sce_with_sliding_window, \
+    get_spike_times_in_bins
 
 from pymeica.utils.display.rasters import plot_raster
 from pymeica.utils.misc import get_brain_area_from_cell_label
@@ -248,7 +248,34 @@ class CellAssembly:
         self.is_responsive_units_dict = is_responsive_units_dict
         self.is_invariant_units_dict = is_invariant_units_dict
         self.cells_synchronous_event = cells_synchronous_event
+        # keeping unique events, list of tuple of 2 int representing the bin
+        # (bin_size being mcad_outcome.spike_trains_bin_size)
+        self.synchronous_events_bins = []
+        for events in self.cells_synchronous_event.values():
+            self.synchronous_events_bins.extend([tuple(e) for e in events])
+        self.synchronous_events_bins = list(set(self.synchronous_events_bins))
+        self.synchronous_events_bins.sort()
+        # print(f'self.synchronous_events_bins {self.synchronous_events_bins}')
+        # TODO: Find a way to build a spike_train for each synchronous event with original spikes
         self._probability_score_pre_computed = None
+
+        # the key is a tuple containing the params of transition matrix, and the value is a matrix of n x n
+        self.transition_matrices_dict = dict()
+
+    def _get_spike_train_for_synchronous_event(self, event_index):
+        """
+
+        :param event_index:
+        :return:
+        """
+        bin_tuple = self.synchronous_events_bins[event_index]
+        bins_to_explore = np.arange(bin_tuple[0], bin_tuple[1] + 1)
+        units_index_by_spike, spike_times, new_spike_trains = \
+            get_spike_times_in_bins(units=np.arange(len(self.mcad_outcome.spike_trains)),
+                                    spike_indices=self.mcad_outcome.spike_bins_indices,
+                                    bins_to_explore=bins_to_explore,
+                                    spike_trains=self.mcad_outcome.spike_trains)
+        return new_spike_trains
 
     def get_brain_region_count(self):
         """
@@ -256,6 +283,19 @@ class CellAssembly:
         :return: A dict with key the brain area, and value a count with the number of units from this area
         """
         return dict(collections.Counter(self.brain_regions))
+
+    def build_transition_matrix(self, bin_size):
+        """
+        Build a n x n matrix. n is the number of units in the assembly.
+        For each unit, give the number of spike that follow this unit after binning the spike train
+        over each synchronous event (for the period of time defined in MCAD). It take in consideration each
+        repetition of the CA.
+        :param bin_size: (int) ms
+        :return: a n x n np.array, follow the order of cell_labels
+        """
+        # TODO: Consider options such as keep just the next spike, or take all spike in the next x ms after the spike
+        # TODO keep it in a dict in self in memory with the specific spec
+        transition_matrix = np.zeros((self.n_units, self.n_units), dtype="int16")
 
     @property
     def main_brain_region(self):
@@ -301,7 +341,7 @@ class CellAssembly:
 
     @property
     def n_repeats(self):
-        return len(self.cells_synchronous_event[self.cells[0]])
+        return len(self.synchronous_events_bins)
 
     @property
     def n_repeats_by_min(self):
@@ -345,9 +385,11 @@ class MCADOutcome:
         self.n_cells_in_total = len(self.cell_index_to_label)
         self.remove_high_firing_cells = "firing_rate_threshold" in mcad_yaml_dict
         self.firing_rate_threshold = mcad_yaml_dict.get("firing_rate_threshold", 0)
-        self.cells_synchronous_event = mcad_yaml_dict.get("cells", None)
         # (dict) key is the cell index (a value in cells), and the value is a list of
-        #    list of 2 int representing the first and last bin index of each syncrhonous event in this cell assembly
+        # list of 2 int representing the first and last bin index of each synchronous event in this cell assembly
+        self.cells_synchronous_event = mcad_yaml_dict.get("cells", None)
+        # (dict) key is a cell assembly index, and the value is a list of
+        #    int representing the cells index (a value in cells)
         self.single_cell_assemblies = mcad_yaml_dict.get("single_cell_assemblies", None)
 
         # index of the list correspond to cell index, and value is a boolean indicating if the cell is IU ou RU
@@ -379,13 +421,16 @@ class MCADOutcome:
             if no_cell_assemblies:
                 self.n_cell_assemblies = 0
 
+        # spike_trains represent the original spike train used to look for cell assembly using MCAD
         self.spike_trains, self.spike_nums, \
-        cells_label = subject.build_spike_nums(sleep_stage_index=self.sleep_stage_index,
+        cells_label, self.spike_bins_indices = subject.build_spike_nums(sleep_stage_index=self.sleep_stage_index,
                                                side_to_analyse=self.side,
                                                keeping_only_SU=self.with_only_SU,
                                                remove_high_firing_cells=self.remove_high_firing_cells,
                                                firing_rate_threshold=self.firing_rate_threshold,
                                                spike_trains_binsize=self.spike_trains_bin_size)
+        # spike_indices: A list of lists for each spike train (i.e., rows of the binned matrix),
+        #  that in turn contains for each spike the index into the binned matrix where this spike enters.
         # instance of CellAssembly
         self.cell_assemblies = []
         if (self.n_cell_assemblies > 0) and (self.single_cell_assemblies is not None):
@@ -409,9 +454,6 @@ class MCADOutcome:
                                              is_invariant_units_dict=is_invariant_units_dict,
                                              cells_synchronous_event=cells_synchronous_event_in_cell_assembly)
                 self.cell_assemblies.append(cell_assembly)
-
-    # TODO: Make a function that allows to know how many RU / IU in each cell assembly
-    #  then how many are stastically
 
     @property
     def n_responsive_units(self):

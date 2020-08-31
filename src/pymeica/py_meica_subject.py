@@ -693,7 +693,10 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         else:
             spike_nums = spike_trains_binned.to_bool_array().astype("int8")
 
-        return spike_trains, spike_nums, cells_label
+        # A list of lists for each spike train (i.e., rows of the binned matrix),
+        # that in turn contains for each spike the index into the binned matrix where this spike enters.
+        spike_bins_indices = spike_trains_binned.spike_indices
+        return spike_trains, spike_nums, cells_label, spike_bins_indices
 
     def construct_spike_structure(self, sleep_stage_indices=None,
                                   selection_range_time=None,

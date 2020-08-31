@@ -8,6 +8,42 @@ import numpy as np
 import math
 from pymeica.utils.misc import get_continous_time_periods
 
+
+def get_spike_times_in_bins(units, spike_indices, bins_to_explore, spike_trains):
+    """
+    For each unit, get the spike times corresponding to the bins given
+    Args:
+        units: int representing the index of the unit
+        spike_indices: A list of lists for each spike train (i.e., rows of the binned matrix),
+        that in turn contains for each spike the index into the binned matrix where this spike enters.
+        bins_to_explore: array of int representing the bin to explore
+        spike_trains: list of lists for eacg spike train, containing the timestamps of spikes (non binned)
+
+    Returns: a list of units and spike times, of the same lengths, the units indices corresponding to the spike times
+
+    """
+    units_index_by_spike = []
+    spike_times = []
+    # same number of units, but we only keep the spike times that are in those bins
+    new_spike_trains = [[]]*len(units)
+
+    for bin_number in bins_to_explore:
+        # print(f"bin_number {bin_number}")
+        for unit_index, unit_id in enumerate(units):
+            # print(f"unit_index {unit_index}, unit_id {unit_id}")
+            # print(f"spike_nums[unit_id][bin_number] {spike_nums[unit_id][bin_number]}")
+            unit_spike_indices = spike_indices[unit_id]
+            # print(f"unit_spike_indices {unit_spike_indices}")
+            spikes_in_bin = np.where(unit_spike_indices == bin_number)[0]
+            if len(spikes_in_bin) > 0:
+                # print(f"spikes_in_bin {spikes_in_bin}")
+                for spike_in_bin in spikes_in_bin:
+                    spike_times.append(spike_trains[unit_id][spike_in_bin])
+                    units_index_by_spike.append(unit_index)
+                    new_spike_trains[unit_index].append(spike_trains[unit_id][spike_in_bin])
+
+    return units_index_by_spike, spike_times, new_spike_trains
+
 # TODO: same method but with spike_trains
 # TODO: for concatenation of SCE, if the same cells spike more than one, then the following should be considered
 # in the count of cells active after the first SCE

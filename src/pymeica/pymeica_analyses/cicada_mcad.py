@@ -261,7 +261,7 @@ class CicadaMcad(CicadaAnalysis):
                   f"{session_data.sleep_stages[sleep_stage_index].duration_sec} sec")
             print("-" * 50)
 
-            spike_trains, spike_nums, cells_label = \
+            spike_trains, spike_nums, cells_label, spike_indices = \
                 session_data.build_spike_nums(sleep_stage_index=sleep_stage_index,
                                               side_to_analyse=side_to_analyse,
                                               keeping_only_SU=not use_su_and_mu,
