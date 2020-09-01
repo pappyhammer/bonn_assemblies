@@ -223,16 +223,20 @@ class CellAssembly:
 
     def __init__(self, sleep_stage, mcad_outcome, cells, cells_label,
                  is_responsive_units_dict, is_invariant_units_dict,
-                 cells_synchronous_event):
+                 cells_synchronous_event,
+                 responsive_units_indices,
+                 invariant_units_indices
+                 ):
         """
 
         :param sleep_stage: Instance of SleepStage
-        :param cells: (list of int) index of the cells
+        :param cells: (list of int) index of the cells. Indices matches spike_trains. cells[1] matches cells_label[1]
         :param cells_label: list of string, representing cells' label
         :param is_responsive_units_dict: key is the cell label, value is a list of 2 int, representing the evening
-        and morning preferred stimulus (-1 means no response)
+        and morning preferred stimulus (-1 means no response). Only contains the cells that are responsive
         :param cells_synchronous_event: (dict) key is the cell index (a value in cells), and the value is a list of
         list of 2 int representing the first and last bin index of each synchronous event in this cell assembly
+        :param responsive_units_indices: list of int,
         """
         self.sleep_stage = sleep_stage
         self.mcad_outcome = mcad_outcome
@@ -248,13 +252,22 @@ class CellAssembly:
         self.is_responsive_units_dict = is_responsive_units_dict
         self.is_invariant_units_dict = is_invariant_units_dict
         self.cells_synchronous_event = cells_synchronous_event
+        self.responsive_units_indices = responsive_units_indices
+        self.invariant_units_indices = invariant_units_indices
         # keeping unique events, list of tuple of 2 int representing the bin
         # (bin_size being mcad_outcome.spike_trains_bin_size)
         self.synchronous_events_bins = []
         for events in self.cells_synchronous_event.values():
             self.synchronous_events_bins.extend([tuple(e) for e in events])
         self.synchronous_events_bins = list(set(self.synchronous_events_bins))
+        # To save some time, possibility of not sorting the list
         self.synchronous_events_bins.sort()
+        # Spikes in synchronous event, pre-computed
+        # key is a tuple representing first and last bin of the synchronous event
+        # value is a list of 3 elements: units_index_by_spike, spike_times, new_spike_trains
+        # (see _get_spike_train_for_synchronous_event() and
+        # # get_spike_times_in_bins() for more details)
+        self._spikes_in_se_pre_computed_dict = dict()
         # print(f'self.synchronous_events_bins {self.synchronous_events_bins}')
         # TODO: Find a way to build a spike_train for each synchronous event with original spikes
         self._probability_score_pre_computed = None
@@ -269,20 +282,18 @@ class CellAssembly:
         :return:
         """
         bin_tuple = self.synchronous_events_bins[event_index]
+        if bin_tuple in self._spikes_in_se_pre_computed_dict:
+            return self._spikes_in_se_pre_computed_dict[bin_tuple]
+
         bins_to_explore = np.arange(bin_tuple[0], bin_tuple[1] + 1)
         units_index_by_spike, spike_times, new_spike_trains = \
             get_spike_times_in_bins(units=np.arange(len(self.mcad_outcome.spike_trains)),
                                     spike_indices=self.mcad_outcome.spike_bins_indices,
                                     bins_to_explore=bins_to_explore,
                                     spike_trains=self.mcad_outcome.spike_trains)
-        return new_spike_trains
+        self._spikes_in_se_pre_computed_dict[bin_tuple] = units_index_by_spike, spike_times, new_spike_trains
 
-    def get_brain_region_count(self):
-        """
-
-        :return: A dict with key the brain area, and value a count with the number of units from this area
-        """
-        return dict(collections.Counter(self.brain_regions))
+        return self._spikes_in_se_pre_computed_dict[bin_tuple]
 
     def build_transition_matrix(self, bin_size):
         """
@@ -296,6 +307,15 @@ class CellAssembly:
         # TODO: Consider options such as keep just the next spike, or take all spike in the next x ms after the spike
         # TODO keep it in a dict in self in memory with the specific spec
         transition_matrix = np.zeros((self.n_units, self.n_units), dtype="int16")
+
+
+    def get_brain_region_count(self):
+        """
+
+        :return: A dict with key the brain area, and value a count with the number of units from this area
+        """
+        return dict(collections.Counter(self.brain_regions))
+
 
     @property
     def main_brain_region(self):
@@ -435,20 +455,31 @@ class MCADOutcome:
         self.cell_assemblies = []
         if (self.n_cell_assemblies > 0) and (self.single_cell_assemblies is not None):
             for cell_assembly_index, cells_in_assembly in self.single_cell_assemblies.items():
+                """
+                # cells_label_in_assembly matches cells_in_assembly as long as the cells in cells_in_assembly
+                # are sorted
                 cells_label_in_assembly = [l for index_l, l in enumerate(cells_label) if index_l in cells_in_assembly]
+                """
+                cells_label_in_assembly = [cells_label[cell_index] for cell_index in cells_in_assembly]
                 # self.is_cell_responsive_unit = [False] * len(self.cell_index_to_label)
                 is_responsive_units_dict = dict()
                 is_invariant_units_dict = dict()
-                for cell_label in cells_label_in_assembly:
+                responsive_units_indices = []
+                invariant_units_indices = []
+                for cell_label_index, cell_label in enumerate(cells_label_in_assembly):
                     if cell_label in subject.is_responsive_units_dict:
                         is_responsive_units_dict[cell_label] = subject.is_responsive_units_dict[cell_label]
+                        responsive_units_indices.append(cells_in_assembly[cell_label_index])
                     if cell_label in subject.is_invariant_units_dict:
                         is_invariant_units_dict[cell_label] = subject.is_invariant_units_dict[cell_label]
+                        invariant_units_indices.append(cells_in_assembly[cell_label_index])
 
                 cells_synchronous_event_in_cell_assembly = dict()
                 for cell in cells_in_assembly:
                     cells_synchronous_event_in_cell_assembly[cell] = self.cells_synchronous_event[cell]
                 cell_assembly = CellAssembly(sleep_stage=self.sleep_stage, mcad_outcome=self,
+                                             responsive_units_indices=responsive_units_indices,
+                                             invariant_units_indices=invariant_units_indices,
                                              cells=cells_in_assembly, cells_label=cells_label_in_assembly,
                                              is_responsive_units_dict=is_responsive_units_dict,
                                              is_invariant_units_dict=is_invariant_units_dict,
