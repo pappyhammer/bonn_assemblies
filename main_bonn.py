@@ -3014,7 +3014,7 @@ def read_kmean_results(patients_to_analyse, path_kmean_dir, data_path, path_resu
                     print(f"Assembly probability: {np.round(cell_ass_prob, 4)}")
                     print(" ")
 
-                    # TODO: Ad all units not just RU
+                    # TODO: add all units not just RU
                     if cell_ass_prob < 0.3 and n_responsive_units_in_ass >= 2:
                         # patient_pair_of_cells_transition_order = []
                         # print(f"### cell_assembly {cell_assembly}")

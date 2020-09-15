@@ -30,9 +30,10 @@ from sortedcontainers import SortedList, SortedDict
 from scipy.special import comb
 
 from pymeica.utils.spike_trains import get_sce_detection_threshold, detect_sce_with_sliding_window, \
-    get_spike_times_in_bins
+    get_spike_times_in_bins, create_binned_spike_train
 
 from pymeica.utils.display.rasters import plot_raster
+from pymeica.utils.display.pymeica_plots import plot_transition_heatmap
 from pymeica.utils.misc import get_brain_area_from_cell_label
 
 
@@ -278,7 +279,7 @@ class CellAssembly:
     def _get_spike_train_for_synchronous_event(self, event_index):
         """
 
-        :param event_index:
+        :param event_index: index of the syncrhonous event
         :return:
         """
         bin_tuple = self.synchronous_events_bins[event_index]
@@ -295,19 +296,107 @@ class CellAssembly:
 
         return self._spikes_in_se_pre_computed_dict[bin_tuple]
 
-    def build_transition_matrix(self, bin_size):
+    def build_transition_matrix(self, with_just_responsive_units=True, count_just_the_next_one=True,
+                                delay_max_bw_transitions=10, spike_trains_binsize=None,
+                                plot_file_name=None, results_path=None, save_formats="png"):
         """
-        Build a n x n matrix. n is the number of units in the assembly.
-        For each unit, give the number of spike that follow this unit after binning the spike train
-        over each synchronous event (for the period of time defined in MCAD). It take in consideration each
-        repetition of the CA.
-        :param bin_size: (int) ms
-        :return: a n x n np.array, follow the order of cell_labels
+            Build a n x n matrix. n is the number of units in the assembly.
+
+            For each unit, give the number of spike that follows this unit after binning the spike train
+            over each synchronous event (for the period of time defined in MCAD). It takes in consideration each
+            repetition of the CA.
+
+            :param with_just_responsive_units: (bool) if True, the transition matrix contains only the
+            :param delay_max_bw_transitions: (int) ms delay between two spikes to consider they are connected in
+            the transition matrix
+            :param count_just_the_next_one: (bool) if True only the following spike in the order or firing will be
+            counted (if more than one spike in the same bin, they will all be counted). It still have to be in the
+            delay time
+            :param spike_trains_binsize: (int) ms, if None no binning is applied for transition matrix
+            :param plot_file_name: (str) file_name of the plot file, if None no figure is ploted. Results_path must
+            not be none.
+            :return: a n x n np.array, follow the order of cell_labels
         """
-        # TODO: Consider options such as keep just the next spike, or take all spike in the next x ms after the spike
-        # TODO keep it in a dict in self in memory with the specific spec
+        # TODO: keep it in a dict in self in memory with the specific spec ?
+
         transition_matrix = np.zeros((self.n_units, self.n_units), dtype="int16")
 
+        # looping over each synchronous event
+        for event_index in range(len(self.synchronous_events_bins)):
+            units_index_by_spike, spike_times, \
+            new_spike_trains = self._get_spike_train_for_synchronous_event(event_index=event_index)
+            if spike_trains_binsize is not None:
+                # first we bin the new_spike_trains and then sort the "spikes"
+                spike_nums, spike_bins_indices = create_binned_spike_train(spike_trains=new_spike_trains,
+                                                                           spike_trains_binsize=spike_trains_binsize,
+                                                                           time_format="ms")
+                spike_times = []
+                units_index_by_spike = []
+                for unit_index in np.arange(len(spike_nums)):
+                    unit_spike_times = list(np.where(spike_nums[unit_index])[0])
+                    spike_times.extend(unit_spike_times)
+                    units_index_by_spike.extend([unit_index]*len(unit_spike_times))
+
+                # delay between two spikes will be the size of the bin
+                delay_max_bw_transitions = delay_max_bw_transitions / spike_trains_binsize
+
+            new_order = np.argsort(spike_times)
+            spike_times_ordered = np.array(spike_times)[new_order]
+            units_ordered = np.array(units_index_by_spike)[new_order]
+
+            for index, unit_number in enumerate(units_ordered[:-1]):
+                next_one = index + 1
+                delay = spike_times_ordered[next_one] - spike_times_ordered[index]
+                if count_just_the_next_one:
+                    if delay <= delay_max_bw_transitions:
+                        transition_matrix[unit_number, units_ordered[next_one]] += 1
+                    next_one += 1
+                    delay = spike_times_ordered[next_one] - spike_times_ordered[next_one-1]
+                    while delay == 0:
+                        transition_matrix[unit_number, units_ordered[next_one]] += 1
+                        next_one += 1
+                        if next_one == len(units_ordered):
+                            break
+                        delay = spike_times_ordered[next_one] - spike_times_ordered[next_one-1]
+                else:
+                    while delay <= delay_max_bw_transitions:
+                        transition_matrix[unit_number, units_ordered[next_one]] += 1
+                        next_one += 1
+                        if next_one == len(units_ordered):
+                            break
+                        delay = spike_times_ordered[next_one] - spike_times_ordered[index]
+                # print(f"delay {delay}")
+            # filling diagonal with zero
+            np.fill_diagonal(transition_matrix, 0)
+
+        # TODO: integrate RI in the for loop for efficiency
+        if with_just_responsive_units:
+            # ##### keeping only responsive units
+            new_transitions = np.zeros((len(self.responsive_units_indices),
+                                        len(self.responsive_units_indices)),
+                                       dtype="int16")
+            responsive_units_indices = np.array(self.responsive_units_indices)
+            for index, unit_to_keep in enumerate(responsive_units_indices):
+                new_transitions[index] = transition_matrix[unit_to_keep, responsive_units_indices]
+
+            transitions = new_transitions
+
+        if (plot_file_name is not None) and (results_path is not None):
+            transitions_normalized = np.copy(transition_matrix)
+            for line_index in np.arange(len(transition_matrix)):
+                sum_line = np.sum(transitions_normalized[line_index])
+                if sum_line > 0:
+                    transitions_normalized[line_index] = (transitions_normalized[
+                                                              line_index] / sum_line) * 100
+
+            plot_transition_heatmap(heatmap_content=transitions_normalized,
+                                    x_ticks_labels=stimulus_indices,
+                                    y_ticks_labels=stimulus_indices,
+                                    annot=transition_matrix,
+                                    file_name=plot_file_name,
+                                    results_path=results_path)
+
+        return transition_matrix
 
     def get_brain_region_count(self):
         """
@@ -315,7 +404,6 @@ class CellAssembly:
         :return: A dict with key the brain area, and value a count with the number of units from this area
         """
         return dict(collections.Counter(self.brain_regions))
-
 
     @property
     def main_brain_region(self):
@@ -330,7 +418,7 @@ class CellAssembly:
             if count_value > max_count:
                 max_count = count_value
                 max_brain_region = brain_region
-        return max_brain_region, (max_count/self.n_units) * 100
+        return max_brain_region, (max_count / self.n_units) * 100
 
     @property
     def probability_score(self):
@@ -367,7 +455,8 @@ class CellAssembly:
     def n_repeats_by_min(self):
         return self.n_repeats / (self.mcad_outcome.duration_in_sec / 60)
 
-    #TODO: Compute the probability of this cell assembly taking in consideration the RU & IU
+    # TODO: Compute the probability of this cell assembly taking in consideration the RU & IU
+
 
 class MCADOutcome:
     BEST_SILHOUETTE = "best_silhouette"
@@ -444,11 +533,11 @@ class MCADOutcome:
         # spike_trains represent the original spike train used to look for cell assembly using MCAD
         self.spike_trains, self.spike_nums, \
         cells_label, self.spike_bins_indices = subject.build_spike_nums(sleep_stage_index=self.sleep_stage_index,
-                                               side_to_analyse=self.side,
-                                               keeping_only_SU=self.with_only_SU,
-                                               remove_high_firing_cells=self.remove_high_firing_cells,
-                                               firing_rate_threshold=self.firing_rate_threshold,
-                                               spike_trains_binsize=self.spike_trains_bin_size)
+                                                                        side_to_analyse=self.side,
+                                                                        keeping_only_SU=self.with_only_SU,
+                                                                        remove_high_firing_cells=self.remove_high_firing_cells,
+                                                                        firing_rate_threshold=self.firing_rate_threshold,
+                                                                        spike_trains_binsize=self.spike_trains_bin_size)
         # spike_indices: A list of lists for each spike train (i.e., rows of the binned matrix),
         #  that in turn contains for each spike the index into the binned matrix where this spike enters.
         # instance of CellAssembly
@@ -489,7 +578,7 @@ class MCADOutcome:
     @property
     def n_responsive_units(self):
         """
-        Number of responsive units in this mcad outcome, could be different than subject if RUhas been filtered
+        Number of responsive units in this mcad outcome, could be different than subject if RU has been filtered
         :return:
         """
         return np.sum(self.is_cell_responsive_unit)

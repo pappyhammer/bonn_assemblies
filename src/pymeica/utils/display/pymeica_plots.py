@@ -3,6 +3,7 @@ from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 import numpy as np
 from datetime import datetime
+import seaborn as sns
 
 
 def plot_scatter_family(data_dict, colors_dict,
@@ -87,7 +88,7 @@ def plot_scatter_family(data_dict, colors_dict,
             colors_scatters.extend(colors_dict[label])
 
         label_legend = label_to_legend[label] if label_to_legend is not None else label
-        if len(data_dict) > 3:
+        if len(data_to_scatters) > 3:
             markers = data_to_scatters[3]
             for index in range(len(x_pos)):
                 # if too slow, see to regroup by scatter value
@@ -462,3 +463,62 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                         save_formats=save_formats,
                         dpi=dpi,
                         with_timestamp_in_file_name=True)
+
+def plot_transition_heatmap(heatmap_content, annot,
+                            file_name, results_path, y_ticks_labels=None, x_ticks_labels=None, x_ticks_pos=None,
+                            y_ticks_pos=None, save_formats="png"):
+    """
+        Plot a transition matrix heatmap
+        :param heatmap_content: a nxn array, containing the value that will be color coded
+        :param annot: a nxn array, containing the value that will be displayed in each case
+        :param file_name:
+        :param path_results:
+        :param y_ticks_labels:
+        :param x_ticks_labels:
+        :param x_ticks_pos:
+        :param y_ticks_pos:
+        :return:
+    """
+    background_color = "black"
+    fig, ax = plt.subplots()
+    # fmt='d' means integers
+    ax = sns.heatmap(heatmap_content, annot=annot, fmt='d', cmap="YlGnBu",
+                     vmin=np.min(heatmap_content), vmax=np.max(heatmap_content))
+    #vmin=0, vmax=100
+    fig.tight_layout()
+    # adjust the space between axis and the edge of the figure
+    # https://matplotlib.org/faq/howto_faq.html#move-the-edge-of-an-axes-to-make-room-for-tick-labels
+    # fig.subplots_adjust(left=0.2)
+    ax.set_facecolor(background_color)
+
+    labels_color = "white"
+    ax.xaxis.label.set_color(labels_color)
+    ax.yaxis.label.set_color(labels_color)
+
+    # ax.yaxis.set_tick_params(labelsize=20)
+    # ax.xaxis.set_tick_params(labelsize=20)
+    ax.tick_params(axis='y', colors=labels_color)
+    ax.tick_params(axis='x', colors=labels_color)
+    if x_ticks_labels is not None:
+        if x_ticks_pos is not None:
+            ax.set_xticks(x_ticks_pos)
+        ax.set_xticklabels(x_ticks_labels)
+    if y_ticks_labels is not None:
+        if y_ticks_pos is not None:
+            ax.set_yticks(y_ticks_pos)
+        ax.set_yticklabels(y_ticks_labels)
+
+    cbar = ax.collections[0].colorbar
+    # here set the labelsize by 20
+    cbar.ax.tick_params(colors=labels_color)
+
+    fig.patch.set_facecolor(background_color)
+    save_formats = ["png"]
+    if isinstance(save_formats, str):
+        save_formats = [save_formats]
+
+    for save_format in save_formats:
+        fig.savefig(f'{results_path}/{file_name}.{save_format}',
+                    format=f"{save_format}",
+                    facecolor=fig.get_facecolor())
+    plt.close()

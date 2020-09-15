@@ -7,6 +7,9 @@ from random  import random, randint, sample, choice
 import numpy as np
 import math
 from pymeica.utils.misc import get_continous_time_periods
+import elephant.conversion as elephant_conv
+import neo
+import quantities as pq
 
 
 def get_spike_times_in_bins(units, spike_indices, bins_to_explore, spike_trains):
@@ -17,7 +20,7 @@ def get_spike_times_in_bins(units, spike_indices, bins_to_explore, spike_trains)
         spike_indices: A list of lists for each spike train (i.e., rows of the binned matrix),
         that in turn contains for each spike the index into the binned matrix where this spike enters.
         bins_to_explore: array of int representing the bin to explore
-        spike_trains: list of lists for eacg spike train, containing the timestamps of spikes (non binned)
+        spike_trains: list of lists for each spike train, containing the timestamps of spikes (non binned)
 
     Returns: a list of units and spike times, of the same lengths, the units indices corresponding to the spike times
 
@@ -190,11 +193,12 @@ def detect_sce_with_sliding_window(spike_nums, window_duration, perc_threshold=9
     return sce_bool, sce_tuples, sce_nums, sce_times_numbers, activity_threshold
 
 
-def create_spike_train_neo_format(spike_trains):
+def create_spike_train_neo_format(spike_trains, time_format="sec"):
     """
     Take a spike train in sec and prepare it to be transform in neo format.
     Args:
         spike_trains: list of list or list of np.array, representing for each cell the timestamps in sec of its spikes
+        time_format: (str) time format, could be "ms" or "sec", default is "sec"
 
     Returns: a new spike_trains in ms and the first and last timestamp (chronologically) of the spike_train.
 
@@ -205,8 +209,12 @@ def create_spike_train_neo_format(spike_trains):
     t_stop = None
     for cell in np.arange(len(spike_trains)):
         spike_train = spike_trains[cell]
-        # convert frames in ms
-        spike_train = spike_train / 1000
+        if time_format == "ms":
+            pass
+        else:
+            # then time_format is considered being sec
+            # convert frames in ms
+            spike_train = spike_train / 1000
         new_spike_trains.append(spike_train)
         if t_start is None:
             t_start = spike_train[0]
@@ -218,6 +226,35 @@ def create_spike_train_neo_format(spike_trains):
             t_stop = max(t_stop, spike_train[-1])
 
     return new_spike_trains, t_start, t_stop
+
+
+def create_binned_spike_train(spike_trains, spike_trains_binsize, time_format="sec"):
+    # first we create a spike_trains in the neo format
+    spike_trains, t_start, t_stop = create_spike_train_neo_format(spike_trains, time_format=time_format)
+
+    duration_in_sec = (t_stop - t_start) / 1000
+    n_cells = len(spike_trains)
+
+    neo_spike_trains = []
+
+    for cell in np.arange(n_cells):
+        spike_train = spike_trains[cell]
+        # print(f"n_spikes: {cells_label[cell]}: {len(spike_train)}")
+        neo_spike_train = neo.SpikeTrain(times=spike_train, units='ms',
+                                         t_start=t_start,
+                                         t_stop=t_stop)
+        neo_spike_trains.append(neo_spike_train)
+
+    spike_trains_binned = elephant_conv.BinnedSpikeTrain(neo_spike_trains, binsize=spike_trains_binsize)
+
+    spike_nums = spike_trains_binned.to_bool_array().astype("int8")
+
+    # A list of lists for each spike train (i.e., rows of the binned matrix),
+    # that in turn contains for each spike the index into the binned matrix where this spike enters.
+    spike_bins_indices = spike_trains_binned.spike_indices
+
+    return spike_nums, spike_bins_indices
+
 
 
 def spike_trains_threshold_by_firing_rate(spike_trains, firing_rate_threshold, duration_in_sec):
