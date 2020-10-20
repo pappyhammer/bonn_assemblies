@@ -7,14 +7,14 @@ from pymeica.utils.display.pymeica_plots import plot_ca_param_over_night_by_slee
 from sortedcontainers import SortedDict
 
 
-class CicadaCaRepeatOverNight(CicadaAnalysis):
+class CicadaCaStabilityOverNight(CicadaAnalysis):
     def __init__(self, config_handler=None):
         """
         """
-        long_description = '<p align="center"><b>Cell assembly repeats over night</b></p><br>'
-        CicadaAnalysis.__init__(self, name="Cell assembly repeats",
+        long_description = '<p align="center"><b>Cell assembly stability over night</b></p><br>'
+        CicadaAnalysis.__init__(self, name="Cell assembly stability",
                                 family_id="Over night evolution",
-                                short_description="Display cell assembly repeats over night",
+                                short_description="Display cell assembly stability over night",
                                 long_description=long_description,
                                 config_handler=config_handler,
                                 accepted_data_formats=["PyMEICA"])
@@ -22,7 +22,6 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
         # from the choice list, give the index corresponding in the sleep_stages list
         self.sleep_stage_selection_to_index = dict()
         self.stages_name = ["W", "1", "2", "3", "R"]
-
         # used for figure legend
         self.marker_to_brain_region = {'o': 'Amygdala', 's': 'Hippocampus',
                                        '*': "Entorhinal Cortex", 'v': 'Parahippocampal Cortex'}
@@ -34,7 +33,7 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
         Returns:
 
         """
-        analysis_copy = CicadaCaRepeatOverNight(config_handler=self.config_handler)
+        analysis_copy = CicadaCaStabilityOverNight(config_handler=self.config_handler)
         self.transfer_attributes_to_tabula_rasa_copy(analysis_copy=analysis_copy)
 
         return analysis_copy
@@ -74,7 +73,7 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
             session_id = session_data.identifier
             self.add_field_text_option_for_gui(arg_name=f"sleep_stages_selected_by_text_{session_id}",
                                                default_value="",
-                                               short_description=f"Stage sleep indices for {session_id}",
+                                               short_description=f"Stage sleep indices {session_id}",
                                                long_description="You can indicate the "
                                                                 "sleep stages indices in text field, "
                                                                 "such as '1-4 6 15-17'to "
@@ -107,6 +106,12 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
                                      multiple_choices=False,
                                      family_widget="data_params")
 
+        for stage_name in self.stages_name:
+            self.add_color_arg_for_gui(arg_name=f"color_by_stage_{stage_name}",
+                                       default_value=(1, 1, 1, 1.),
+                                       short_description=f"Color for stage {stage_name}",
+                                       long_description=None, family_widget="stage_color")
+
         self.add_choices_arg_for_gui(arg_name="text_in_scatter", choices=["No text", "n RU", "ratio RU / units"],
                                      default_value="n RU",
                                      short_description="Text to display in cell assembly",
@@ -115,21 +120,35 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
                                      multiple_choices=False,
                                      family_widget="data_params")
 
-        for stage_name in self.stages_name:
-            self.add_color_arg_for_gui(arg_name=f"color_by_stage_{stage_name}",
-                                       default_value=(1, 1, 1, 1.),
-                                       short_description=f"Color for stage {stage_name}",
-                                       long_description=None, family_widget="stage_color")
+        self.add_bool_option_for_gui(arg_name="only_among_ru", true_by_default=True,
+                                     short_description="Only stability among RU",
+                                     long_description="Only compute stability withing the responsive "
+                                                      "unit in cell assemblies",
+                                     family_widget="data_params")
 
         self.add_bool_option_for_gui(arg_name="only_ca_with_ri", true_by_default=False,
-                                     short_description="Only CA with RI",
+                                     short_description="Only CA with RU",
                                      long_description="Only consider cell assemblies with responsive unit",
                                      family_widget="data_params")
 
+
         self.add_int_values_arg_for_gui(arg_name="min_repeat_in_ca", min_value=1, max_value=10,
                                         short_description="Min repeat in cell assembly",
-                                        long_description="Only cell assemblies with this minimum repeat will be included",
+                                        long_description="Only cell assemblies with this "
+                                                         "minimum repeat will be included",
                                         default_value=3, family_widget="data_params")
+
+        self.add_int_values_arg_for_gui(arg_name="min_n_cells_assemblies", min_value=1, max_value=4,
+                                        short_description="Min number of cell assemblies in a chunk of data",
+                                        long_description="Only cell assemblies within chunk with "
+                                                         "this minimum n cell assemblies will be included",
+                                        default_value=2, family_widget="data_params")
+
+        self.add_int_values_arg_for_gui(arg_name="min_cells_in_cell_assemblies", min_value=2, max_value=10,
+                                        short_description="Min number of cells in cell assembly",
+                                        long_description="Only cell assemblies with "
+                                                         "this minimum n cell will be included",
+                                        default_value=2, family_widget="data_params")
 
         self.add_image_format_package_for_gui()
 
@@ -172,7 +191,7 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
 
         n_ru_in_text = text_in_scatter == "n RU"
 
-        ratio_ru_in_text = text_in_scatter == "ratio RU / units"
+        ration_ru_in_text = text_in_scatter == "ratio RU / units"
 
         color_by_sleep_stage_dict = dict()
         for stage_name in self.stages_name:
@@ -195,7 +214,15 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
 
         only_ca_with_ri = kwargs.get("only_ca_with_ri", False)
 
+        only_among_ru = kwargs["only_among_ru"]
+        if only_among_ru:
+            only_ca_with_ri = True
+
         min_repeat_in_ca = kwargs.get("min_repeat_in_ca", 3)
+
+        min_n_cells_assemblies = kwargs.get("min_n_cells_assemblies", 2)
+
+        min_cells_in_cell_assemblies = kwargs["min_cells_in_cell_assemblies"]
 
         sleep_stages_to_analyse_by_subject = dict()
 
@@ -229,25 +256,73 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
             # session_data.descriptive_stats()
             # self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
 
-        plot_ca_param_over_night_by_sleep_stage(subjects_data=self._data_to_analyse,
-                                                side_to_analyse=side_to_analyse,
+        for session_index, session_data in enumerate(self._data_to_analyse):
+            session_identifier = session_data.identifier
+            if side_to_analyse == "L&R":
+                sides = ['L', 'R']
+            else:
+                sides = [side_to_analyse]
+            for side in sides:
+                for sleep_stage_index in np.sort(sleep_stages_to_analyse_by_subject[session_identifier]):
+                    sleep_stage = session_data.sleep_stages[sleep_stage_index]
+                    elapsed_time = session_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage,
+                                                                                 from_first_stage_available=True)
+                    if elapsed_time < 0:
+                        continue
 
-                                                param_name="repeat",
-                                                fct_to_get_param=lambda ca: ca.n_repeats_by_min,
-                                                y_axis_label=f"N repeats / min",
+                    if len(sleep_stage.mcad_outcomes) == 0:
+                        # then there is no cell assembly
+                        continue
 
-                                                color_by_sleep_stage_dict=color_by_sleep_stage_dict,
-                                                sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
-                                                only_ca_with_ri=only_ca_with_ri,
-                                                with_text=with_text,
-                                                n_ru_in_text=n_ru_in_text,
-                                                ratio_ru_in_text=ratio_ru_in_text,
-                                                min_repeat_in_ca=min_repeat_in_ca,
-                                                brain_region_to_marker=self.brain_region_to_marker,
-                                                marker_to_brain_region=self.marker_to_brain_region,
-                                                results_path=self.get_results_path(),
-                                                save_formats=save_formats, dpi=dpi,
-                                                h_lines_y_values=None)
+                    for bins_tuple, mcad_outcome in sleep_stage.mcad_outcomes.items():
+                        n_bins = bins_tuple[1] - bins_tuple[0] + 1
+                        chunk_duration_in_sec = (n_bins * mcad_outcome.spike_trains_bin_size) / 1000
+
+                        if mcad_outcome.side != side:
+                            continue
+                        if mcad_outcome.n_cell_assemblies < min_n_cells_assemblies:
+                            continue
+
+                        for ca_index, cell_assembly in enumerate(mcad_outcome.cell_assemblies):
+                            if only_ca_with_ri and (cell_assembly.n_responsive_units == 0):
+                                continue
+                            if cell_assembly.n_repeats < min_repeat_in_ca:
+                                continue
+
+                            if cell_assembly.n_units < min_cells_in_cell_assemblies:
+                                continue
+
+                            ca_description = f"ss_{sleep_stage_index}_{sleep_stage.sleep_stage}_" \
+                                             f"ca_{ca_index}_n-RUs_{cell_assembly.n_responsive_units}_" \
+                                             f"n-units_{cell_assembly.n_units}"
+                            plot_ca_param_over_night_by_sleep_stage(subjects_data=self._data_to_analyse,
+                                                                    side_to_analyse=side_to_analyse,
+                                                                    param_name=f"stability_{ca_description}",
+                                                                    referenced_ca=cell_assembly,
+                                                                    fct_to_get_param=lambda ca, ca_ref:
+                                                                    ca_ref.similarity_score(ca,
+                                                                                            only_among_ru=
+                                                                                            only_among_ru),
+                                                                    y_axis_label=f"Similarity (%)",
+                                                                    color_by_sleep_stage_dict=color_by_sleep_stage_dict,
+                                                                    sleep_stages_to_analyse_by_subject=
+                                                                    sleep_stages_to_analyse_by_subject,
+                                                                    only_ca_with_ri=only_ca_with_ri,
+                                                                    with_text=with_text,
+                                                                    n_ru_in_text=n_ru_in_text,
+                                                                    ratio_ru_in_text=ration_ru_in_text,
+                                                                    min_repeat_in_ca=min_repeat_in_ca,
+                                                                    min_n_cells_assemblies=min_n_cells_assemblies,
+                                                                    min_cells_in_cell_assemblies=
+                                                                    min_cells_in_cell_assemblies,
+                                                                    individual_plot_for_ss=False,
+                                                                    brain_region_to_marker=self.brain_region_to_marker,
+                                                                    marker_to_brain_region=self.marker_to_brain_region,
+                                                                    results_path=self.get_results_path(),
+                                                                    save_formats=save_formats, dpi=dpi,
+                                                                    hyponogram_y_step=2,
+                                                                    with_mean_lines=False,
+                                                                    h_lines_y_values=None)
 
         self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)
-        print(f"Score cell assemblies over night analysis run in {time() - self.analysis_start_time:.2f} sec")
+        print(f"Stability cell assemblies over night analysis run in {time() - self.analysis_start_time:.2f} sec")

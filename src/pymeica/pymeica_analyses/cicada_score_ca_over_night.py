@@ -73,7 +73,7 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
             session_id = session_data.identifier
             self.add_field_text_option_for_gui(arg_name=f"sleep_stages_selected_by_text_{session_id}",
                                                default_value="",
-                                               short_description="Stage sleep indices",
+                                               short_description=f"Stage sleep indices {session_id}",
                                                long_description="You can indicate the "
                                                                 "sleep stages indices in text field, "
                                                                 "such as '1-4 6 15-17'to "
@@ -127,8 +127,21 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
 
         self.add_int_values_arg_for_gui(arg_name="min_repeat_in_ca", min_value=1, max_value=10,
                                         short_description="Min repeat in cell assembly",
-                                        long_description="Only cell assemblies with this minimum repeat will be included",
+                                        long_description="Only cell assemblies with this "
+                                                         "minimum repeat will be included",
                                         default_value=3, family_widget="data_params")
+
+        self.add_int_values_arg_for_gui(arg_name="min_n_cells_assemblies", min_value=1, max_value=4,
+                                        short_description="Min number of cell assemblies in a chunk of data",
+                                        long_description="Only cell assemblies within chunk with "
+                                                         "this minimum n cell assemblies will be included",
+                                        default_value=2, family_widget="data_params")
+
+        self.add_int_values_arg_for_gui(arg_name="min_cells_in_cell_assemblies", min_value=2, max_value=10,
+                                        short_description="Min number of cells in cell assembly",
+                                        long_description="Only cell assemblies with "
+                                                         "this minimum n cell will be included",
+                                        default_value=2, family_widget="data_params")
 
         self.add_image_format_package_for_gui()
 
@@ -196,6 +209,10 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
 
         min_repeat_in_ca = kwargs.get("min_repeat_in_ca", 3)
 
+        min_n_cells_assemblies = kwargs.get("min_n_cells_assemblies", 2)
+
+        min_cells_in_cell_assemblies = kwargs["min_cells_in_cell_assemblies"]
+
         sleep_stages_to_analyse_by_subject = dict()
 
         for session_index, session_data in enumerate(self._data_to_analyse):
@@ -239,10 +256,13 @@ class CicadaScoreCaOverNight(CicadaAnalysis):
                                                 n_ru_in_text=n_ru_in_text,
                                                 ratio_ru_in_text=ration_ru_in_text,
                                                 min_repeat_in_ca=min_repeat_in_ca,
+                                                min_n_cells_assemblies=min_n_cells_assemblies,
+                                                min_cells_in_cell_assemblies=min_cells_in_cell_assemblies,
                                                 brain_region_to_marker=self.brain_region_to_marker,
                                                 marker_to_brain_region=self.marker_to_brain_region,
                                                 results_path=self.get_results_path(),
                                                 save_formats=save_formats, dpi=dpi,
+                                                with_mean_lines=True,
                                                 h_lines_y_values=[-1 * np.log(0.05)])
 
         self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)

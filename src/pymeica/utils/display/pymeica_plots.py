@@ -4,6 +4,7 @@ from matplotlib.lines import Line2D
 import numpy as np
 from datetime import datetime
 import seaborn as sns
+import math
 
 
 def plot_scatter_family(data_dict, colors_dict,
@@ -69,6 +70,8 @@ def plot_scatter_family(data_dict, colors_dict,
     max_x_value = 0
 
     for label, data_to_scatters in data_dict.items():
+        if len(data_to_scatters[0]) == 0:
+            continue
         min_x_value = min(min_x_value, np.min(data_to_scatters[0]))
         max_x_value = max(max_x_value, np.max(data_to_scatters[0]))
 
@@ -207,8 +210,14 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                                             ratio_ru_in_text,
                                             sleep_stages_to_analyse_by_subject, results_path,
                                             save_formats, dpi,
+                                            referenced_ca=None,
+                                            min_n_cells_assemblies=2,
+                                            min_cells_in_cell_assemblies=2,
                                             hyponogram_y_step=0.25,
-                                            plots_linewidth=2,
+                                            plots_linewidth=1,
+                                            individual_plot_for_ss=True,
+                                            with_mean_lines=False,
+                                            from_first_stage_available=True,
                                             h_lines_y_values=None):
     """
     Allows to plot a parameter linked to cell assemblies in order to plot its evolution (in y) over the course
@@ -219,7 +228,12 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
     :param fct_to_get_param: (function) take in argument an instance of CellAssembly and return a value, that correspond
     to the CA param which is evolution will be ploted
     :param y_axis_label
+    :param min_n_cells_assemblies: min n_cell_assemblies in mcad_outcome so we consider inserting this CA in the
+    plot
+    :param min_cells_in_cell_assemblies:
     :param sleep_stages_to_analyse_by_subject:
+    :param referenced_ca: if not None, CellAssembly instance that will be used to compare two instances
+    :param individual_plot_for_ss: if True, a plot if made for each sleep_stage
     :param results_path:
     :param save_formats:
     :param h_lines_y_values: list of float, if not None, a horizontal line will be plot for each value (y)
@@ -244,7 +258,6 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
     # key is brain region, value list of values
     all_values_by_brain_region = dict()
 
-
     for subject_data in subjects_data:
         subject_id = subject_data.identifier
         subject_descr = subject_descr + subject_id + "_"
@@ -260,7 +273,9 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                     time_total_by_stage_dict[sleep_stage.sleep_stage] = 0
                     time_by_stage_with_ca_dict[sleep_stage.sleep_stage] = 0
                 time_total_by_stage_dict[sleep_stage.sleep_stage] += sleep_stage.duration_sec
-                elapsed_time = subject_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage)
+                elapsed_time = subject_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage,
+                                                                             from_first_stage_available=
+                                                                             from_first_stage_available)
                 if elapsed_time < 0:
                     continue
                 # sleep_stage.sleep_stage is a string representing the sleep stage like 'W' or '3'
@@ -280,7 +295,7 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                         # only keeping the outcome from the correct side
                         current_time_in_sleep_stage += chunk_duration_in_sec
                         continue
-                    if mcad_outcome.n_cell_assemblies == 0:
+                    if mcad_outcome.n_cell_assemblies < min_n_cells_assemblies:
                         current_time_in_sleep_stage += chunk_duration_in_sec
                         continue
 
@@ -298,7 +313,16 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                         if cell_assembly.n_repeats < min_repeat_in_ca:
                             continue
 
-                        param_value = fct_to_get_param(cell_assembly)
+                        if cell_assembly.n_units < min_cells_in_cell_assemblies:
+                            continue
+
+                        if referenced_ca is not None:
+                            param_value = fct_to_get_param(cell_assembly, referenced_ca)
+                        else:
+                            param_value = fct_to_get_param(cell_assembly)
+
+                        if param_value is None:
+                            continue
 
                         n_assemblies_by_stage_dict[sleep_stage.sleep_stage] += 1
 
@@ -344,6 +368,8 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
     max_time = 0
     for sleep_stage_name, scatter_values in ca_param_by_stage_dict.items():
         times = scatter_values[0]
+        if len(times) == 0:
+            continue
         min_time = min(min_time, np.min(times))
         max_time = max(max_time, np.max(times))
     bin_edges = np.arange(min_time, max_time + step_length, step_length)
@@ -352,24 +378,27 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
     y_pos_sleep_stage = y_pos_sep
     for sleep_stage_name, scatter_values in ca_param_by_stage_dict.items():
         avg_param_hypno_by_stage_dict[sleep_stage_name] = [[[], []]]
-        times = scatter_values[0]
-        param_values = np.asarray(scatter_values[1])
-        for step_index, bin_edge in enumerate(bin_edges[:-1]):
-            next_bin_edge = bin_edges[step_index + 1]
-            center_time = (bin_edge + next_bin_edge) / 2
-            indices = np.where(np.logical_and(times >= bin_edge, times <= next_bin_edge))[0]
-            avg_param_hypno_by_stage_dict[sleep_stage_name][0][0].append(center_time)
-            if len(indices) == 0:
-                avg_param_hypno_by_stage_dict[sleep_stage_name][0][1].append(0)
-            else:
-                avg_param_value = np.mean(param_values[indices])
-                avg_param_hypno_by_stage_dict[sleep_stage_name][0][1].append(avg_param_value)
+        if with_mean_lines:
+            times = scatter_values[0]
+            param_values = np.asarray(scatter_values[1])
+            for step_index, bin_edge in enumerate(bin_edges[:-1]):
+                next_bin_edge = bin_edges[step_index + 1]
+                center_time = (bin_edge + next_bin_edge) / 2
+                indices = np.where(np.logical_and(times >= bin_edge, times <= next_bin_edge))[0]
+                avg_param_hypno_by_stage_dict[sleep_stage_name][0][0].append(center_time)
+                if len(indices) == 0:
+                    avg_param_hypno_by_stage_dict[sleep_stage_name][0][1].append(0)
+                else:
+                    avg_param_value = np.mean(param_values[indices])
+                    avg_param_hypno_by_stage_dict[sleep_stage_name][0][1].append(avg_param_value)
 
         for sleep_stage_index in np.sort(sleep_stages_to_analyse_by_subject[subject_id]):
             sleep_stage = subject_data.sleep_stages[sleep_stage_index]
             if sleep_stage.sleep_stage != sleep_stage_name:
                 continue
-            elapsed_time = subject_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage)
+            elapsed_time = subject_data.elapsed_time_from_falling_asleep(sleep_stage=sleep_stage,
+                                                                         from_first_stage_available=
+                                                                         from_first_stage_available)
             if elapsed_time < 0:
                 continue
             new_epoch = [[elapsed_time / 3600, (elapsed_time + sleep_stage.duration_sec) / 3600],
@@ -390,42 +419,45 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
 
     # h_lines_y_values = [-1 * np.log(0.05)]
     # for sleep_stage, duration_in_stage in total_sleep_duration_by_stage.items():
-    for sleep_stage_name, scatter_values in ca_param_by_stage_dict.items():
-        data_dict = {sleep_stage_name: scatter_values}
-        ca_time_sec = time_by_stage_with_ca_dict[sleep_stage_name]
-        total_time_sec = time_total_by_stage_dict[sleep_stage_name]
-        ratio_ca_time_total_time = (ca_time_sec / total_time_sec) * 100
-        avg_value_ss = avg_fct(all_values_by_sleep_stage[sleep_stage_name])
-        legend = f"(x{n_assemblies_by_stage_dict[sleep_stage_name]} CA, avg={avg_value_ss:.1f}) " \
-                 f"{ratio_ca_time_total_time:.1f}% of {(total_time_sec / 60):.1f} min"
-        label_to_legend_dict = {sleep_stage_name: f"{sleep_stage_name}: {legend}"}
-        avg_param_dict = {sleep_stage_name: avg_param_hypno_by_stage_dict[sleep_stage_name]}
-        plot_scatter_family(data_dict=data_dict,
-                            label_to_legend=label_to_legend_dict,
-                            colors_dict=color_by_sleep_stage_dict,
-                            filename=f"{subject_descr}{param_name}_ca_over_night_stage_"
-                                     f"{sleep_stage_name}_{side_to_analyse}",
-                            y_label=y_axis_label,
-                            path_results=results_path,  # y_lim=[0, 100],
-                            x_label="Time (hours)",
-                            y_log=False,
-                            h_lines_y_values=h_lines_y_values,
-                            scatter_size=150,
-                            scatter_alpha=0.8,
-                            plots_linewidth=plots_linewidth,
-                            lines_plot_values=avg_param_dict,
-                            background_color="black",
-                            link_scatter=False,
-                            labels_color="white",
-                            with_x_jitter=0.05,
-                            with_y_jitter=None,
-                            x_labels_rotation=None,
-                            marker_to_legend=brain_region_legend_dict,
-                            with_text=with_text,
-                            text_size=5,
-                            save_formats=save_formats,
-                            dpi=dpi,
-                            with_timestamp_in_file_name=True)
+    if individual_plot_for_ss:
+        for sleep_stage_name, scatter_values in ca_param_by_stage_dict.items():
+            data_dict = {sleep_stage_name: scatter_values}
+            ca_time_sec = time_by_stage_with_ca_dict[sleep_stage_name]
+            total_time_sec = time_total_by_stage_dict[sleep_stage_name]
+            ratio_ca_time_total_time = (ca_time_sec / total_time_sec) * 100
+            avg_value_ss = avg_fct(all_values_by_sleep_stage[sleep_stage_name])
+            legend = f"(x{n_assemblies_by_stage_dict[sleep_stage_name]} CA, avg={avg_value_ss:.1f}) " \
+                     f"{ratio_ca_time_total_time:.1f}% of {(total_time_sec / 60):.1f} min"
+            label_to_legend_dict = {sleep_stage_name: f"{sleep_stage_name}: {legend}"}
+
+            avg_param_dict = {sleep_stage_name: avg_param_hypno_by_stage_dict[sleep_stage_name]}
+
+            plot_scatter_family(data_dict=data_dict,
+                                label_to_legend=label_to_legend_dict,
+                                colors_dict=color_by_sleep_stage_dict,
+                                filename=f"{subject_descr}{param_name}_ca_over_night_stage_"
+                                         f"{sleep_stage_name}_{side_to_analyse}",
+                                y_label=y_axis_label,
+                                path_results=results_path,  # y_lim=[0, 100],
+                                x_label="Time (hours)",
+                                y_log=False,
+                                h_lines_y_values=h_lines_y_values,
+                                scatter_size=150,
+                                scatter_alpha=0.8,
+                                plots_linewidth=plots_linewidth,
+                                lines_plot_values=avg_param_dict,
+                                background_color="black",
+                                link_scatter=False,
+                                labels_color="white",
+                                with_x_jitter=0.05,
+                                with_y_jitter=None,
+                                x_labels_rotation=None,
+                                marker_to_legend=brain_region_legend_dict,
+                                with_text=with_text,
+                                text_size=5,
+                                save_formats=save_formats,
+                                dpi=dpi,
+                                with_timestamp_in_file_name=True)
 
     label_to_legend_dict = dict()
     for sleep_stage_name in ca_param_by_stage_dict.keys():
@@ -464,27 +496,74 @@ def plot_ca_param_over_night_by_sleep_stage(subjects_data, side_to_analyse, para
                         dpi=dpi,
                         with_timestamp_in_file_name=True)
 
-def plot_transition_heatmap(heatmap_content, annot,
-                            file_name, results_path, y_ticks_labels=None, x_ticks_labels=None, x_ticks_pos=None,
-                            y_ticks_pos=None, save_formats="png"):
-    """
-        Plot a transition matrix heatmap
-        :param heatmap_content: a nxn array, containing the value that will be color coded
-        :param annot: a nxn array, containing the value that will be displayed in each case
-        :param file_name:
-        :param path_results:
-        :param y_ticks_labels:
-        :param x_ticks_labels:
-        :param x_ticks_pos:
-        :param y_ticks_pos:
-        :return:
-    """
+
+def plot_heatmap(heatmap_matrix, file_name, path_results, y_ticks_labels=None, x_ticks_labels=None,
+                                                 x_ticks_pos=None, save_formats=["png"]):
+    # src: https://www.geodose.com/2018/01/creating-heatmap-in-python-from-scratch.html
+    # DEFINE GRID SIZE AND RADIUS(h)
+    grid_size = 1
+    h = 5
+
+    x = []
+    y = []
+    for stim_value in np.arange(heatmap_matrix.shape[0]):
+        for time_bin in np.where(heatmap_matrix[stim_value])[0]:
+            for n in np.arange(heatmap_matrix[stim_value, time_bin]):
+                x.append(time_bin)
+                y.append(stim_value)
+    if len(x) == 0:
+        print(f"Empty heatmap_matrix: {np.sum(heatmap_matrix)}")
+        return
+
+    x = np.array(x)
+    y = np.array(y)
+    x_min = min(x)
+    x_max = max(x)
+    y_min = min(y)
+    y_max = max(y)
+
+    # CONSTRUCT GRID
+    x_grid = np.arange(x_min - h, x_max + h, grid_size)
+    y_grid = np.arange(y_min - h, y_max + h, grid_size)
+    x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
+
+    # GRID CENTER POINT
+    xc = x_mesh + (grid_size / 2)
+    yc = y_mesh + (grid_size / 2)
+
+    # FUNCTION TO CALCULATE INTENSITY WITH QUARTIC KERNEL
+    def kde_quartic(d, h):
+        dn = d / h
+        P = (15 / 16) * (1 - dn ** 2) ** 2
+        return P
+
+    # PROCESSING
+    intensity_list = []
+    for j in range(len(xc)):
+        intensity_row = []
+        for k in range(len(xc[0])):
+            kde_value_list = []
+            for i in range(len(x)):
+                # CALCULATE DISTANCE
+                d = math.sqrt((xc[j][k] - x[i]) ** 2 + (yc[j][k] - y[i]) ** 2)
+                if d <= h:
+                    p = kde_quartic(d, h)
+                else:
+                    p = 0
+                kde_value_list.append(p)
+            # SUM ALL INTENSITY VALUE
+            p_total = sum(kde_value_list)
+            intensity_row.append(p_total)
+        intensity_list.append(intensity_row)
+
+    intensity = np.array(intensity_list)
+
     background_color = "black"
     fig, ax = plt.subplots()
-    # fmt='d' means integers
-    ax = sns.heatmap(heatmap_content, annot=annot, fmt='d', cmap="YlGnBu",
-                     vmin=np.min(heatmap_content), vmax=np.max(heatmap_content))
-    #vmin=0, vmax=100
+    plt.pcolormesh(x_mesh, y_mesh, intensity)
+    plt.plot(x, y, '|', color="red")
+    plt.colorbar()
+
     fig.tight_layout()
     # adjust the space between axis and the edge of the figure
     # https://matplotlib.org/faq/howto_faq.html#move-the-edge-of-an-axes-to-make-room-for-tick-labels
@@ -499,6 +578,69 @@ def plot_transition_heatmap(heatmap_content, annot,
     # ax.xaxis.set_tick_params(labelsize=20)
     ax.tick_params(axis='y', colors=labels_color)
     ax.tick_params(axis='x', colors=labels_color)
+    # if ticks_labels is not None:
+    #     ax.set_xticklabels(ticks_labels)
+    #     ax.set_yticklabels(ticks_labels)
+    if y_ticks_labels is not None:
+        ax.set_yticks(np.arange(0, len(y_ticks_labels)))
+        ax.set_yticklabels(y_ticks_labels)
+
+    if x_ticks_labels is not None:
+        ax.set_xticks(x_ticks_pos)
+        ax.set_xticklabels(x_ticks_labels)
+
+    ax.set_ylim(-1, len(y_ticks_labels))
+
+    cbar = ax.collections[0].colorbar
+    # here set the labelsize by 20
+    cbar.ax.tick_params(colors=labels_color)
+
+    fig.patch.set_facecolor(background_color)
+
+    if isinstance(save_formats, str):
+        save_formats = [save_formats]
+
+    for save_format in save_formats:
+        fig.savefig(f'{path_results}/{file_name}.{save_format}',
+                    format=f"{save_format}",
+                    facecolor=fig.get_facecolor())
+    plt.close()
+
+
+def plot_transition_heatmap(heatmap_content, annot,
+                            file_name, results_path, y_ticks_labels=None, x_ticks_labels=None, x_ticks_pos=None,
+                            y_ticks_pos=None, save_formats="png", dpi=300):
+    """
+        Plot a transition matrix heatmap
+        :param heatmap_content: a nxn array, containing the value that will be color coded
+        :param annot: a nxn array, containing the value that will be displayed in each case
+        :param file_name:
+        :param path_results:
+        :param y_ticks_labels:
+        :param x_ticks_labels:
+        :param x_ticks_pos:
+        :param y_ticks_pos:
+        :return:
+    """
+    background_color = "black"
+    fig, ax = plt.subplots(dpi=dpi)
+    # fmt='d' means integers
+    ax = sns.heatmap(heatmap_content, annot=annot, fmt='d', cmap="YlGnBu",
+                     vmin=np.min(heatmap_content), vmax=np.max(heatmap_content))
+    # vmin=0, vmax=100
+    # adjust the space between axis and the edge of the figure
+    # https://matplotlib.org/faq/howto_faq.html#move-the-edge-of-an-axes-to-make-room-for-tick-labels
+    # fig.subplots_adjust(left=0.2)
+    ax.set_facecolor(background_color)
+
+    labels_color = "white"
+    ax.xaxis.label.set_color(labels_color)
+    ax.yaxis.label.set_color(labels_color)
+
+    # ax.yaxis.set_tick_params(labelsize=20)
+    # ax.xaxis.set_tick_params(labelsize=20)
+    ax.tick_params(axis='y', colors=labels_color, labelsize=5)
+    ax.tick_params(axis='x', colors=labels_color, labelsize=5)
     if x_ticks_labels is not None:
         if x_ticks_pos is not None:
             ax.set_xticks(x_ticks_pos)
@@ -510,10 +652,16 @@ def plot_transition_heatmap(heatmap_content, annot,
 
     cbar = ax.collections[0].colorbar
     # here set the labelsize by 20
-    cbar.ax.tick_params(colors=labels_color)
+    cbar.ax.tick_params(colors=labels_color, labelsize=8)
+    for tick in ax.get_xticklabels():
+        tick.set_rotation(45)
+
+    for tick in ax.get_yticklabels():
+        tick.set_rotation(45)
+
+    fig.tight_layout()
 
     fig.patch.set_facecolor(background_color)
-    save_formats = ["png"]
     if isinstance(save_formats, str):
         save_formats = [save_formats]
 

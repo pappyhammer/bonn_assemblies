@@ -475,17 +475,19 @@ class PyMeicaSubject(CicadaAnalysisFormatWrapper):
         self.n_microwires = len(self.spikes_by_microwire)
         self.available_micro_wires = np.array(self.available_micro_wires)
 
-    def elapsed_time_from_falling_asleep(self, sleep_stage):
+    def elapsed_time_from_falling_asleep(self, sleep_stage, from_first_stage_available=False):
         """
         Looking at the time of the first sleep sleep_stage (it could start with Wake), return the number
         of time that separate it in seconds (could be negative if the stage is the wake one before sleep)
         :param sleep_stage: SleepStage instance
+        :param from_first_stage_available: if True, the time is measured from the first stage recorded.
         :return:
         """
         for sleep_stage_index in range(len(self.sleep_stages)):
             ss = self.sleep_stages[sleep_stage_index]
-            if ss.sleep_stage == "W":
-                continue
+            if not from_first_stage_available:
+                if ss.sleep_stage == "W":
+                    continue
             return (sleep_stage.start_time - ss.start_time) / 1000000
         return -1
 

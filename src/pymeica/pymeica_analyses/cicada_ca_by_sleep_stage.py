@@ -265,13 +265,15 @@ def plot_ca_proportion_night_by_sleep_stage(subjects_data, side_to_analyse, colo
                     if abs(duration_in_sec - sleep_stage.duration_sec) < 15:
                         duration_in_sec = sleep_stage.duration_sec
                     time_cover_by_bin_tuples += duration_in_sec
-                    if mcad_outcome.n_cell_assemblies not in total_time_with_ca_by_stage[sleep_stage.sleep_stage]:
-                        total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
-                    total_time_with_ca_by_stage[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += duration_in_sec
+                    n_cell_assemblies = mcad_outcome.n_cell_assemblies
+                    n_cell_assemblies = 0 if n_cell_assemblies == 1 else n_cell_assemblies
+                    if n_cell_assemblies not in total_time_with_ca_by_stage[sleep_stage.sleep_stage]:
+                        total_time_with_ca_by_stage[sleep_stage.sleep_stage][n_cell_assemblies] = 0
+                    total_time_with_ca_by_stage[sleep_stage.sleep_stage][n_cell_assemblies] += duration_in_sec
 
-                    if mcad_outcome.n_cell_assemblies not in n_chunks_by_stage_and_ca[sleep_stage.sleep_stage]:
-                        n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] = 0
-                    n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][mcad_outcome.n_cell_assemblies] += 1
+                    if n_cell_assemblies not in n_chunks_by_stage_and_ca[sleep_stage.sleep_stage]:
+                        n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][n_cell_assemblies] = 0
+                    n_chunks_by_stage_and_ca[sleep_stage.sleep_stage][n_cell_assemblies] += 1
 
                 # in case some chunks will give no MCADOutcome
                 if abs(time_cover_by_bin_tuples - sleep_stage.duration_sec) > 20:

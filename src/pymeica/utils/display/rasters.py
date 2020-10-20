@@ -278,6 +278,8 @@ def plot_raster(spike_nums=None, title=None, file_name=None,
 
     if display_spike_nums:
         for cell, spikes in enumerate(spike_nums):
+            if len(spikes) == 0:
+                continue
             if spike_train_format:
                 if cell == 0:
                     min_time = np.min(spikes)
@@ -628,11 +630,13 @@ def plot_raster(spike_nums=None, title=None, file_name=None,
                 #     sum_spikes[index] = sum_value
                 # sum_spikes[(n_times - sliding_window_duration):] = sum_value
             else:
+                sum_value = None
                 for t in np.arange(0, (n_times - sliding_window_duration)):
                     # One spike by cell max in the sum process
                     sum_value = np.sum(spike_nums_for_activity_sum[:, t:(t + sliding_window_duration)], axis=1)
                     sum_spikes[t] = len(np.where(sum_value)[0])
-                sum_spikes[(n_times - sliding_window_duration):] = len(np.where(sum_value)[0])
+                if sum_value is not None:
+                    sum_spikes[(n_times - sliding_window_duration):] = len(np.where(sum_value)[0])
         elif spikes_sum_to_use is None:
             if spike_train_format:
                 pass
@@ -708,7 +712,8 @@ def plot_raster(spike_nums=None, title=None, file_name=None,
         if y_lim_sum_activity is not None:
             ax2.set_ylim(y_lim_sum_activity[0], y_lim_sum_activity[1])
         else:
-            ax2.set_ylim(0, np.max(sum_spikes))
+            if len(sum_spikes) > 0:
+                ax2.set_ylim(0, np.max(sum_spikes))
         if spike_train_format:
             ax2.set_xlim(min_time - 1, max_time + 1)
         else:

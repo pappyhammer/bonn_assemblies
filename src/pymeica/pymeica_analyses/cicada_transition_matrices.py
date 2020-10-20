@@ -7,14 +7,14 @@ from pymeica.utils.display.pymeica_plots import plot_ca_param_over_night_by_slee
 from sortedcontainers import SortedDict
 
 
-class CicadaCaRepeatOverNight(CicadaAnalysis):
+class CicadaTransitionMatrices(CicadaAnalysis):
     def __init__(self, config_handler=None):
         """
         """
         long_description = '<p align="center"><b>Cell assembly repeats over night</b></p><br>'
-        CicadaAnalysis.__init__(self, name="Cell assembly repeats",
-                                family_id="Over night evolution",
-                                short_description="Display cell assembly repeats over night",
+        CicadaAnalysis.__init__(self, name="CA transition matrices",
+                                family_id="connectivity",
+                                short_description="Display cell assemblies' transition matrix",
                                 long_description=long_description,
                                 config_handler=config_handler,
                                 accepted_data_formats=["PyMEICA"])
@@ -30,20 +30,20 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
 
     def copy(self):
         """
-        Make a copy of the analysis
-        Returns:
+            Make a copy of the analysis
+            Returns:
 
         """
-        analysis_copy = CicadaCaRepeatOverNight(config_handler=self.config_handler)
+        analysis_copy = CicadaTransitionMatrices(config_handler=self.config_handler)
         self.transfer_attributes_to_tabula_rasa_copy(analysis_copy=analysis_copy)
 
         return analysis_copy
 
     def check_data(self):
         """
-        Check the data given one initiating the class and return True if the data given allows the analysis
-        implemented, False otherwise.
-        :return: a boolean
+            Check the data given one initiating the class and return True if the data given allows the analysis
+            implemented, False otherwise.
+            :return: a boolean
         """
         super().check_data()
 
@@ -107,24 +107,36 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
                                      multiple_choices=False,
                                      family_widget="data_params")
 
-        self.add_choices_arg_for_gui(arg_name="text_in_scatter", choices=["No text", "n RU", "ratio RU / units"],
-                                     default_value="n RU",
-                                     short_description="Text to display in cell assembly",
-                                     long_description="Fro each scatter representing a cell assembly, you can display "
-                                                      "information regarding responsive units (RU) in it.",
-                                     multiple_choices=False,
+        self.add_bool_option_for_gui(arg_name="with_just_responsive_units", true_by_default=True,
+                                     short_description="With just responsive units",
+                                     long_description="Display only the responsive units in the transition matrix. "
+                                                      "If no responsive units, then the transition matrix is not "
+                                                      "plotted",
                                      family_widget="data_params")
 
-        for stage_name in self.stages_name:
-            self.add_color_arg_for_gui(arg_name=f"color_by_stage_{stage_name}",
-                                       default_value=(1, 1, 1, 1.),
-                                       short_description=f"Color for stage {stage_name}",
-                                       long_description=None, family_widget="stage_color")
+        self.add_int_values_arg_for_gui(arg_name="spike_trains_binsize", min_value=0, max_value=5,
+                                        short_description="Bin size (ms)",
+                                        default_value=1, family_widget="data_params")
 
-        self.add_bool_option_for_gui(arg_name="only_ca_with_ri", true_by_default=False,
-                                     short_description="Only CA with RI",
-                                     long_description="Only consider cell assemblies with responsive unit",
+        self.add_int_values_arg_for_gui(arg_name="delay_max_bw_transitions", min_value=1, max_value=50,
+                                        short_description="Delay(ms)",
+                                        long_description="delay between two spikes to consider they are connected",
+                                        default_value=10, family_widget="data_params")
+
+        self.add_bool_option_for_gui(arg_name="count_just_the_next_one", true_by_default=True,
+                                     short_description="Count just the next one",
+                                     long_description="if True only the following spike in the order or "
+                                                      "firing will be counted (if more than one spike in the same bin, "
+                                                      "they will all be counted). "
+                                                      "It still have to be in the delay time",
                                      family_widget="data_params")
+
+        self.add_int_values_arg_for_gui(arg_name="min_nb_of_ri", min_value=1, max_value=10,
+                                        short_description="Min number of responsive units",
+                                        long_description="If 'with just responsive units' is chosen, "
+                                                         "only the assembly "
+                                                         "with this number of responsive units will be displayed",
+                                        default_value=3, family_widget="data_params")
 
         self.add_int_values_arg_for_gui(arg_name="min_repeat_in_ca", min_value=1, max_value=10,
                                         short_description="Min repeat in cell assembly",
@@ -166,19 +178,6 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
 
         side_to_analyse = kwargs["side_to_analyse"]
 
-        text_in_scatter = kwargs["text_in_scatter"]
-
-        with_text = text_in_scatter != "No text"
-
-        n_ru_in_text = text_in_scatter == "n RU"
-
-        ratio_ru_in_text = text_in_scatter == "ratio RU / units"
-
-        color_by_sleep_stage_dict = dict()
-        for stage_name in self.stages_name:
-            stage_color = kwargs[f"color_by_stage_{stage_name}"]
-            color_by_sleep_stage_dict[stage_name] = stage_color
-
         save_formats = kwargs["save_formats"]
         if save_formats is None:
             save_formats = "pdf"
@@ -193,11 +192,17 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
 
         n_sessions = len(self._data_to_analyse)
 
-        only_ca_with_ri = kwargs.get("only_ca_with_ri", False)
+        with_just_responsive_units = kwargs["with_just_responsive_units"]
+        count_just_the_next_one = kwargs["count_just_the_next_one"]
+        delay_max_bw_transitions = kwargs["delay_max_bw_transitions"]
+        min_nb_of_ri = kwargs["min_nb_of_ri"]
+        spike_trains_binsize = kwargs["spike_trains_binsize"]
+        if spike_trains_binsize == 0:
+            # then no binning
+            spike_trains_binsize = None
 
         min_repeat_in_ca = kwargs.get("min_repeat_in_ca", 3)
 
-        sleep_stages_to_analyse_by_subject = dict()
 
         for session_index, session_data in enumerate(self._data_to_analyse):
             session_identifier = session_data.identifier
@@ -212,7 +217,6 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
                                          for ss in sleep_stages_selected]
             if len(sleep_stages_selected) == 0:
                 print(f"No sleep stage selected for {session_identifier}")
-                sleep_stages_to_analyse_by_subject[session_identifier] = []
                 continue
             # print(f"sleep_stages_selected {sleep_stages_selected}")
 
@@ -225,29 +229,53 @@ class CicadaCaRepeatOverNight(CicadaAnalysis):
                                         update_progress_bar_fct=self.update_progressbar,
                                         time_started=self.analysis_start_time,
                                         total_increment=95 / n_sessions)
-            sleep_stages_to_analyse_by_subject[session_identifier] = sleep_stages_selected
-            # session_data.descriptive_stats()
-            # self.update_progressbar(time_started=self.analysis_start_time, increment_value=100 / n_sessions)
 
-        plot_ca_param_over_night_by_sleep_stage(subjects_data=self._data_to_analyse,
-                                                side_to_analyse=side_to_analyse,
+            if side_to_analyse == "L&R":
+                sides = ['L', 'R']
+            else:
+                sides = [side_to_analyse]
 
-                                                param_name="repeat",
-                                                fct_to_get_param=lambda ca: ca.n_repeats_by_min,
-                                                y_axis_label=f"N repeats / min",
+            for sleep_stage_index in np.sort(sleep_stages_selected):
+                sleep_stage = session_data.sleep_stages[sleep_stage_index]
+                sleep_stage_name = sleep_stage.sleep_stage
 
-                                                color_by_sleep_stage_dict=color_by_sleep_stage_dict,
-                                                sleep_stages_to_analyse_by_subject=sleep_stages_to_analyse_by_subject,
-                                                only_ca_with_ri=only_ca_with_ri,
-                                                with_text=with_text,
-                                                n_ru_in_text=n_ru_in_text,
-                                                ratio_ru_in_text=ratio_ru_in_text,
-                                                min_repeat_in_ca=min_repeat_in_ca,
-                                                brain_region_to_marker=self.brain_region_to_marker,
-                                                marker_to_brain_region=self.marker_to_brain_region,
-                                                results_path=self.get_results_path(),
-                                                save_formats=save_formats, dpi=dpi,
-                                                h_lines_y_values=None)
+                if len(sleep_stage.mcad_outcomes) == 0:
+                    # then there is no cell assembly
+                    continue
+
+                for bins_tuple, mcad_outcome in sleep_stage.mcad_outcomes.items():
+                    n_bins = bins_tuple[1] - bins_tuple[0] + 1
+                    # chunk_duration_in_sec = (n_bins * mcad_outcome.spike_trains_bin_size) / 1000
+                    bin_str = f"{bins_tuple[0]}-{bins_tuple[1]}"
+
+                    if mcad_outcome.side not in sides:
+                        continue
+                    if mcad_outcome.n_cell_assemblies < 2:
+                        continue
+
+                    for c_a_index, cell_assembly in enumerate(mcad_outcome.cell_assemblies):
+                        if with_just_responsive_units and (cell_assembly.n_responsive_units < min_nb_of_ri):
+                            continue
+                        if cell_assembly.n_repeats < min_repeat_in_ca:
+                            continue
+                        if with_just_responsive_units:
+                            n_cells_in_matrix = cell_assembly.n_responsive_units
+                        else:
+                            n_cells_in_matrix = cell_assembly.n_units
+
+                        plot_file_name = f"{session_identifier}_{side_to_analyse}_" \
+                                         f"ss_index_{sleep_stage_index}_ss_name_{sleep_stage_name}_" \
+                                         f"{bin_str}_ca_{c_a_index}_" \
+                                         f"{n_cells_in_matrix}_cells"
+                        print(f"{plot_file_name}: {cell_assembly.n_units} in total")
+
+                        cell_assembly.build_transition_matrix(with_just_responsive_units=with_just_responsive_units,
+                                                              count_just_the_next_one=count_just_the_next_one,
+                                                              delay_max_bw_transitions=delay_max_bw_transitions,
+                                                              spike_trains_binsize=spike_trains_binsize,
+                                                              plot_file_name=plot_file_name,
+                                                              results_path=self.get_results_path(),
+                                                              save_formats=save_formats)
 
         self.update_progressbar(time_started=self.analysis_start_time, new_set_value=100)
-        print(f"Score cell assemblies over night analysis run in {time() - self.analysis_start_time:.2f} sec")
+        print(f"Score transition matrix analysis run in {time() - self.analysis_start_time:.2f} sec")

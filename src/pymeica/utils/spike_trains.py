@@ -28,7 +28,8 @@ def get_spike_times_in_bins(units, spike_indices, bins_to_explore, spike_trains)
     units_index_by_spike = []
     spike_times = []
     # same number of units, but we only keep the spike times that are in those bins
-    new_spike_trains = [[]]*len(units)
+    # if we do [[]]*len(units), then all lists are considered the same
+    new_spike_trains = [[] for x in range(len(units))]
 
     for bin_number in bins_to_explore:
         # print(f"bin_number {bin_number}")
@@ -44,7 +45,8 @@ def get_spike_times_in_bins(units, spike_indices, bins_to_explore, spike_trains)
                     spike_times.append(spike_trains[unit_id][spike_in_bin])
                     units_index_by_spike.append(unit_index)
                     new_spike_trains[unit_index].append(spike_trains[unit_id][spike_in_bin])
-
+                # sorting spike times
+                new_spike_trains[unit_index].sort()
     return units_index_by_spike, spike_times, new_spike_trains
 
 # TODO: same method but with spike_trains
@@ -200,7 +202,8 @@ def create_spike_train_neo_format(spike_trains, time_format="sec"):
         spike_trains: list of list or list of np.array, representing for each cell the timestamps in sec of its spikes
         time_format: (str) time format, could be "ms" or "sec", default is "sec"
 
-    Returns: a new spike_trains in ms and the first and last timestamp (chronologically) of the spike_train.
+    Returns: a new spike_trains in ms and the first and last timestamp (chronologically) of the spike_train. If
+    timestamps are None, it means there are not spikes
 
     """
 
@@ -216,30 +219,45 @@ def create_spike_train_neo_format(spike_trains, time_format="sec"):
             # convert frames in ms
             spike_train = spike_train / 1000
         new_spike_trains.append(spike_train)
-        if t_start is None:
+        if (t_start is None) and (len(spike_train) > 0):
             t_start = spike_train[0]
-        else:
+        elif len(spike_train) > 0:
             t_start = min(t_start, spike_train[0])
-        if t_stop is None:
+        if t_stop is None and (len(spike_train) > 0):
             t_stop = spike_train[-1]
-        else:
+        elif len(spike_train) > 0:
             t_stop = max(t_stop, spike_train[-1])
 
     return new_spike_trains, t_start, t_stop
 
 
 def create_binned_spike_train(spike_trains, spike_trains_binsize, time_format="sec"):
+    """
+
+    :param spike_trains:
+    :param spike_trains_binsize: (int) ms
+    :param time_format: (str) time format of data in spike_trains
+    :return:
+    """
     # first we create a spike_trains in the neo format
     spike_trains, t_start, t_stop = create_spike_train_neo_format(spike_trains, time_format=time_format)
 
-    duration_in_sec = (t_stop - t_start) / 1000
+    # duration_in_sec = (t_stop - t_start) / 1000
     n_cells = len(spike_trains)
 
+    spike_trains_binsize = spike_trains_binsize * pq.ms
+
     neo_spike_trains = []
+    if t_start is None:
+        # means there are not spikes
+        return None, None
+
+    if t_start == t_stop:
+        # might happen if only one spike in the spike_train
+        t_stop += 1
 
     for cell in np.arange(n_cells):
         spike_train = spike_trains[cell]
-        # print(f"n_spikes: {cells_label[cell]}: {len(spike_train)}")
         neo_spike_train = neo.SpikeTrain(times=spike_train, units='ms',
                                          t_start=t_start,
                                          t_stop=t_stop)
@@ -254,7 +272,6 @@ def create_binned_spike_train(spike_trains, spike_trains_binsize, time_format="s
     spike_bins_indices = spike_trains_binned.spike_indices
 
     return spike_nums, spike_bins_indices
-
 
 
 def spike_trains_threshold_by_firing_rate(spike_trains, firing_rate_threshold, duration_in_sec):

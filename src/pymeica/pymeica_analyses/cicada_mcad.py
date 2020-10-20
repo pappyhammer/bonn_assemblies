@@ -100,6 +100,10 @@ class CicadaMcad(CicadaAnalysis):
                                         short_description="Maximum number of cell assemblies",
                                         default_value=4, family_widget="kmeans_params")
 
+        self.add_int_values_arg_for_gui(arg_name="n_surrogates_raster", min_value=0, max_value=5,
+                                        short_description="N surrogates for the whole MCAD",
+                                        default_value=0, family_widget="kmeans_params")
+
         self.add_int_values_arg_for_gui(arg_name="n_surrogates_k_mean_1st_try", min_value=5, max_value=100,
                                         short_description="N surrogates for kmean on 1st try",
                                         default_value=10, family_widget="kmeans_params")
@@ -119,7 +123,6 @@ class CicadaMcad(CicadaAnalysis):
         self.add_int_values_arg_for_gui(arg_name="perc_threshold_for_kmean_surrogates", min_value=90, max_value=99,
                                         short_description="Percentile threshold for kmean surrogate silhouettes",
                                         default_value=95, family_widget="kmeans_params")
-
 
         self.add_bool_option_for_gui(arg_name="apply_two_steps_k_mean", true_by_default=True,
                                      short_description="Apply kmeans in two steps",
@@ -189,6 +192,8 @@ class CicadaMcad(CicadaAnalysis):
         side_to_analyse = kwargs["side_to_analyse"]
 
         spike_trains_bin_size = kwargs.get("spike_trains_bin_size", 25)
+
+        n_surrogates_raster = kwargs.get("n_surrogates_raster", 0)
 
         min_n_clusters = kwargs.get("min_n_clusters", 2)
         max_n_clusters = max(min_n_clusters, kwargs.get("max_n_clusters", 2))
@@ -276,36 +281,74 @@ class CicadaMcad(CicadaAnalysis):
             stage_descr = f"{side_to_analyse} index {sleep_stage_index} " \
                           f"stage {session_data.sleep_stages[sleep_stage_index].sleep_stage}"
 
-            # params to save in the yaml file
-            params_to_save_dict = dict()
-            params_to_save_dict["subject_id"] = session_identifier
-            params_to_save_dict["spike_trains_bin_size"] = spike_trains_bin_size
-            params_to_save_dict["side"] = side_to_analyse
-            params_to_save_dict["sleep_stage_name"] = str(session_data.sleep_stages[sleep_stage_index].sleep_stage)
-            params_to_save_dict["sleep_stage_index"] = sleep_stage_index
-            params_to_save_dict["with_only_SU"] = bool(not use_su_and_mu)
+            if n_surrogates_raster > 0:
+                for index_surro in range(n_surrogates_raster):
+                    # params to save in the yaml file
+                    params_to_save_dict = dict()
+                    params_to_save_dict["subject_id"] = session_identifier + f"_surro_{index_surro}"
+                    params_to_save_dict["spike_trains_bin_size"] = spike_trains_bin_size
+                    params_to_save_dict["side"] = side_to_analyse
+                    params_to_save_dict["sleep_stage_name"] = str(
+                        session_data.sleep_stages[sleep_stage_index].sleep_stage)
+                    params_to_save_dict["sleep_stage_index"] = sleep_stage_index
+                    params_to_save_dict["with_only_SU"] = bool(not use_su_and_mu)
 
-            if remove_high_firing_cells:
-                params_to_save_dict["firing_rate_threshold"] = int(firing_rate_threshold)
+                    if remove_high_firing_cells:
+                        params_to_save_dict["firing_rate_threshold"] = int(firing_rate_threshold)
 
-            # TODO: Add arguments in widgets
-            mcad_main(stage_descr=stage_descr, results_path=self.get_results_path(),
-                      k_means_cluster_size=k_means_cluster_size,
-                      n_surrogates_k_mean=n_surrogates_k_mean,
-                      k_mean_n_trials=k_mean_n_trials,
-                      spike_trains_binsize=spike_trains_bin_size,
-                      max_size_chunk_in_sec=max_size_chunk_in_sec,
-                      min_size_chunk_in_sec=min_size_chunk_in_sec,
-                      spike_trains=spike_trains,
-                      cells_label=cells_label,
-                      spike_nums=spike_nums,
-                      subject_id=session_identifier,
-                      min_activity_threshold=min_activity_threshold,
-                      params_to_save_dict=params_to_save_dict,
-                      n_surrogate_activity_threshold=n_surrogate_activity_threshold,
-                      perc_threshold_for_sce=perc_threshold_for_sce,
-                      verbose=verbose,
-                      perc_threshold_for_kmean_surrogates=perc_threshold_for_kmean_surrogates)
+                    spike_nums_rolled = np.copy(spike_nums)
+                    for n, spike_num in enumerate(spike_nums_rolled):
+                        spike_nums_rolled[n, :] = np.roll(spike_num, np.random.randint(1, spike_nums_rolled.shape[1]))
+
+                    mcad_main(stage_descr=stage_descr, results_path=self.get_results_path(),
+                              k_means_cluster_size=k_means_cluster_size,
+                              n_surrogates_k_mean=n_surrogates_k_mean,
+                              k_mean_n_trials=k_mean_n_trials,
+                              spike_trains_binsize=spike_trains_bin_size,
+                              max_size_chunk_in_sec=max_size_chunk_in_sec,
+                              min_size_chunk_in_sec=min_size_chunk_in_sec,
+                              cells_label=cells_label,
+                              spike_nums=spike_nums_rolled,
+                              subject_id=session_identifier + f"_surro_{index_surro}",
+                              min_activity_threshold=min_activity_threshold,
+                              params_to_save_dict=params_to_save_dict,
+                              n_surrogate_activity_threshold=n_surrogate_activity_threshold,
+                              perc_threshold_for_sce=perc_threshold_for_sce,
+                              verbose=verbose,
+                              perc_threshold_for_kmean_surrogates=perc_threshold_for_kmean_surrogates)
+            else:
+                # params to save in the yaml file
+                params_to_save_dict = dict()
+                params_to_save_dict["subject_id"] = session_identifier
+                params_to_save_dict["spike_trains_bin_size"] = spike_trains_bin_size
+                params_to_save_dict["side"] = side_to_analyse
+                params_to_save_dict["sleep_stage_name"] = str(session_data.sleep_stages[sleep_stage_index].sleep_stage)
+                params_to_save_dict["sleep_stage_index"] = sleep_stage_index
+                params_to_save_dict["with_only_SU"] = bool(not use_su_and_mu)
+
+                if remove_high_firing_cells:
+                    params_to_save_dict["firing_rate_threshold"] = int(firing_rate_threshold)
+
+                print("Below: unit type, cluster, electrode & number of spikes ")
+                for i, train in enumerate(spike_trains):
+                    print(f"{cells_label[i]}, {len(train)}")
+
+                mcad_main(stage_descr=stage_descr, results_path=self.get_results_path(),
+                          k_means_cluster_size=k_means_cluster_size,
+                          n_surrogates_k_mean=n_surrogates_k_mean,
+                          k_mean_n_trials=k_mean_n_trials,
+                          spike_trains_binsize=spike_trains_bin_size,
+                          max_size_chunk_in_sec=max_size_chunk_in_sec,
+                          min_size_chunk_in_sec=min_size_chunk_in_sec,
+                          cells_label=cells_label,
+                          spike_nums=spike_nums,
+                          subject_id=session_identifier,
+                          min_activity_threshold=min_activity_threshold,
+                          params_to_save_dict=params_to_save_dict,
+                          n_surrogate_activity_threshold=n_surrogate_activity_threshold,
+                          perc_threshold_for_sce=perc_threshold_for_sce,
+                          verbose=verbose,
+                          perc_threshold_for_kmean_surrogates=perc_threshold_for_kmean_surrogates)
 
             self.update_progressbar(time_started=self.analysis_start_time,
                                     increment_value=
